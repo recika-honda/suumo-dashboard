@@ -33,14 +33,10 @@ const SUUMO_CATEGORIES = [
  * 1枚の画像をClaude Visionで分類
  * @param {Buffer} imageBuffer - JPEG画像バッファ
  * @param {Array<{id: string, label: string}>} availableCategories - 使用可能なカテゴリ
- * @param {string} [reinsTitle] - REINS画像カードのタイトルテキスト（分類ヒント）
  * @returns {string|null} カテゴリID
  */
-async function classifySingleImage(imageBuffer, availableCategories, reinsTitle) {
+async function classifySingleImage(imageBuffer, availableCategories) {
   const catList = availableCategories.map((c) => `${c.id}=${c.label}`).join(", ");
-
-  // Use REINS title as hint if available
-  const hintLine = reinsTitle ? `\nREINS上のタイトル: 「${reinsTitle}」（参考情報として活用してください）` : "";
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -59,20 +55,22 @@ async function classifySingleImage(imageBuffer, availableCategories, reinsTitle)
           },
           {
             type: "text",
-            text: `この不動産物件写真を1つのカテゴリに分類してください。
-カテゴリ: ${catList}
-${hintLine}
+            text: `この不動産物件写真を画像の内容のみで1つのカテゴリに分類してください。
 
-判定基準:
+カテゴリ: ${catList}
+
+判定基準（画像に実際に写っているもので判断）:
 - 間取り図・平面図・フロアプラン → 必ず04
 - 建物の外観写真（外から撮影） → 05
 - リビング・ダイニング・居間（広い部屋、ソファ、テーブル） → 01
 - 洋室（ベッド、クローゼットのある個室） → 06
-- キッチン（コンロ、シンク、調理台） → 02
-- バスルーム・浴室（浴槽、シャワー） → 03
+- キッチン（コンロ、シンク、調理台が写っている） → 02
+- バスルーム・浴室（浴槽、シャワーが写っている） → 03
 - トイレ（便器が写っている） → 08
-- 洗面台・洗面所 → 09
+- 洗面台・洗面所（洗面ボウル、鏡） → 09
 - QRコードの画像 → 「QR」とだけ回答
+
+重要: 画像に実際に写っているものだけで判断してください。外部情報に頼らないでください。
 
 IDのみ回答（例: 01）。`,
           },
@@ -112,52 +110,70 @@ async function analyzeAndCropImages(downloaded, downloadDir, existingCategories 
   // 5ptカテゴリを優先的に埋めるため、まず全画像を分類してからソート
   const classifications = [];
 
+  // Title → category ID mapping (for conflict detection logging only)
+  const TITLE_TO_CAT = {
+    "間取": "04", "平面図": "04", "フロア": "04",
+    "外観": "05", "建物": "05",
+    "リビング": "01", "居室": "01", "LD": "01",
+    "キッチン": "02", "台所": "02",
+    "バス": "03", "浴室": "03", "風呂": "03",
+    "洋室": "06", "ベッドルーム": "06",
+    "和室": "07",
+    "トイレ": "08",
+    "洗面": "09",
+    "玄関": "10",
+    "収納": "11", "クローゼット": "11",
+    "バルコニー": "12", "ベランダ": "12",
+    "エントランス": "13", "共用": "13",
+    "周辺": "14",
+  };
+
   for (const img of validImages) {
     const buffer = fs.readFileSync(img.localPath);
     const available = SUUMO_CATEGORIES.filter((c) => !usedCategories.has(c.id));
 
     let catId = null;
     try {
-      catId = await classifySingleImage(buffer, available, img.title || "");
+      catId = await classifySingleImage(buffer, available);
     } catch (err) {
       console.error(`[image] Vision failed #${img.index}:`, err.message);
     }
 
-    // REINS title-based fallback: try to match title to a category before random fallback
-    if (!catId && img.title) {
-      const titleLower = img.title.toLowerCase();
-      const titleMap = {
-        "間取": "04", "平面図": "04", "フロア": "04",
-        "外観": "05", "建物": "05",
-        "リビング": "01", "居室": "01", "LD": "01",
-        "キッチン": "02", "台所": "02",
-        "バス": "03", "浴室": "03", "風呂": "03",
-        "洋室": "06", "ベッドルーム": "06",
-        "和室": "07",
-        "トイレ": "08",
-        "洗面": "09",
-        "玄関": "10",
-        "収納": "11", "クローゼット": "11",
-        "バルコニー": "12", "ベランダ": "12",
-        "エントランス": "13", "共用": "13",
-        "周辺": "14",
-      };
-      for (const [key, id] of Object.entries(titleMap)) {
-        if (titleLower.includes(key.toLowerCase()) && available.find((c) => c.id === id)) {
-          catId = id;
-          console.log(`[image] #${img.index} → title fallback: "${img.title}" → ${id}`);
-          break;
-        }
+    // Retry once if Vision failed
+    if (!catId) {
+      try {
+        catId = await classifySingleImage(buffer, available);
+        if (catId) console.log(`[image] #${img.index} → classified on retry`);
+      } catch (err) {
+        console.error(`[image] Vision retry failed #${img.index}:`, err.message);
       }
     }
 
-    // Final fallback: fill high-score categories first
+    // Cross-check: detect REINS title vs Vision mismatch (Vision always wins)
+    if (catId && img.title) {
+      const titleLower = img.title.toLowerCase();
+      let titleSuggestedId = null;
+      for (const [key, id] of Object.entries(TITLE_TO_CAT)) {
+        if (titleLower.includes(key.toLowerCase())) {
+          titleSuggestedId = id;
+          break;
+        }
+      }
+      if (titleSuggestedId && titleSuggestedId !== catId) {
+        const visionCat = SUUMO_CATEGORIES.find(c => c.id === catId);
+        const titleCat = SUUMO_CATEGORIES.find(c => c.id === titleSuggestedId);
+        console.warn(`[image] WARNING #${img.index}: REINS title="${img.title}"(${titleCat?.label}) vs Vision="${visionCat?.label}" → Vision優先`);
+      }
+    }
+
+    // Final fallback: fill high-score categories first (NO title-based fallback)
     if (!catId) {
       const fallback = available.find((c) => c.score === 5) || available[0];
       catId = fallback?.id;
+      if (catId) console.log(`[image] #${img.index} → generic fallback: ${SUUMO_CATEGORIES.find(c => c.id === catId)?.label}`);
     }
 
-    // QRコード画像はスキップ（修正点14）
+    // QRコード画像はスキップ
     if (catId === "QR") {
       console.log(`[image] #${img.index} → QRコード検出 → スキップ`);
       continue;

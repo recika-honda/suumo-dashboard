@@ -3,20 +3,84 @@
  *
  * 1. Missing 5pt category images: search "[property name] キッチン" etc.
  * 2. Surrounding environment photos: Google Maps nearby search → Google Image search
+ *    - AI validation: reject images with people, ensure facility is clearly visible
  */
 const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
+const Anthropic = require("@anthropic-ai/sdk");
+
+const aiClient = new Anthropic();
 
 /**
- * Google Image search via Playwright — download first usable result
+ * Validate a shuhen (surrounding environment) image using Claude Vision.
+ * Rejects images with people and images where the target facility is unclear.
+ *
+ * @param {Buffer} imageBuffer - JPEG image buffer
+ * @param {string} facilityType - Expected facility type (e.g., "コンビニ", "スーパー")
+ * @returns {{ valid: boolean, reason: string }}
+ */
+async function validateShuhenImage(imageBuffer, facilityType) {
+  try {
+    const response = await aiClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 100,
+      messages: [{
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/jpeg",
+              data: imageBuffer.toString("base64"),
+            },
+          },
+          {
+            type: "text",
+            text: `この画像を判定してください。期待する施設: 「${facilityType}」
+
+判定基準:
+1. 人物が大きく写っている場合はNG
+2. 「${facilityType}」の建物・店舗の外観がはっきりと確認できない場合はNG
+3. ロゴ・看板・建物外観で施設が特定できる場合はOK
+
+JSON形式で回答:
+{"valid":true,"reason":"OK"} または {"valid":false,"reason":"理由"}`,
+          },
+        ],
+      }],
+    });
+
+    const text = response.content[0].text.trim();
+    const jsonMatch = text.match(/\{[^}]+\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch {}
+    }
+    if (text.includes('"valid":false') || text.includes('"valid": false')) {
+      return { valid: false, reason: text.slice(0, 80) };
+    }
+    return { valid: true, reason: "OK" };
+  } catch (err) {
+    console.log(`[google-img] Validation error: ${err.message.slice(0, 60)}`);
+    return { valid: true, reason: "validation-error" };
+  }
+}
+
+/**
+ * Google Image search via Playwright — download first usable result.
+ * When facilityType is specified, validates each candidate with AI
+ * (rejects images with people / unclear facility).
  *
  * @param {import('playwright').BrowserContext} context
  * @param {string} query - search query
  * @param {string} outputPath - file save path
+ * @param {string|null} facilityType - facility type for AI validation (null to skip)
  * @returns {string|null} saved file path or null
  */
-async function googleImageSearch(context, query, outputPath) {
+async function googleImageSearch(context, query, outputPath, facilityType = null) {
   const page = await context.newPage();
   try {
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch&udm=2`;
@@ -26,11 +90,9 @@ async function googleImageSearch(context, query, outputPath) {
     // Extract image URLs from search results
     const imageUrls = await page.evaluate(() => {
       const urls = [];
-      // Google Images stores full-size URLs in data attributes or in <img> src
       const imgs = document.querySelectorAll("img");
       for (const img of imgs) {
         const src = img.src || "";
-        // Skip Google UI images, base64 placeholders, and tiny icons
         if (src.startsWith("data:") || src.includes("google.com/images") ||
             src.includes("gstatic.com") || src.includes("googleusercontent.com/favicon") ||
             !src.startsWith("http")) continue;
@@ -38,12 +100,11 @@ async function googleImageSearch(context, query, outputPath) {
           urls.push(src);
         }
       }
-      // Also check for encrypted_tbn URLs (Google's image proxies)
       const encImgs = document.querySelectorAll('img[src*="encrypted-tbn"]');
       for (const img of encImgs) {
         if (img.naturalWidth > 50) urls.push(img.src);
       }
-      return [...new Set(urls)].slice(0, 5);
+      return [...new Set(urls)].slice(0, 10);
     });
 
     if (imageUrls.length === 0) {
@@ -54,14 +115,11 @@ async function googleImageSearch(context, query, outputPath) {
     // Try to click first result to get full-size image
     let fullUrl = null;
     try {
-      // Click first image thumbnail to open preview
       const firstImg = await page.$('div[data-ri="0"] img, div[jscontroller] img');
       if (firstImg) {
         await firstImg.click();
         await page.waitForTimeout(2000);
-        // Get the full-size image from the preview panel
         fullUrl = await page.evaluate(() => {
-          // The preview panel shows larger images
           const previewImgs = document.querySelectorAll('img[jsname="kn3ccd"], img[jsname="HiaYvf"]');
           for (const img of previewImgs) {
             const src = img.src || "";
@@ -72,21 +130,52 @@ async function googleImageSearch(context, query, outputPath) {
           return null;
         });
       }
-    } catch { /* preview click failed, use thumbnail */ }
+    } catch { /* preview click failed, use thumbnails */ }
 
-    const targetUrl = fullUrl || imageUrls[0];
-    console.log(`[google-img] Downloading: ${targetUrl.slice(0, 80)}...`);
+    // Build candidate list: full-size first, then thumbnails
+    const candidates = fullUrl ? [fullUrl, ...imageUrls] : imageUrls;
+    const uniqueCandidates = [...new Set(candidates)];
 
-    // Download via Playwright's fetch (handles cookies/redirects)
-    const response = await page.context().request.get(targetUrl, { timeout: 10000 });
-    if (response.ok()) {
-      const buffer = await response.body();
-      // Resize to standard format
-      await sharp(buffer)
-        .resize({ width: 1280, height: 960, fit: "cover", position: "centre" })
-        .jpeg({ quality: 85 })
-        .toFile(outputPath);
-      console.log(`[google-img] Saved: ${path.basename(outputPath)}`);
+    let fallbackSaved = false;
+    for (const url of uniqueCandidates) {
+      try {
+        const response = await page.context().request.get(url, { timeout: 10000 });
+        if (!response.ok()) continue;
+
+        const buffer = await response.body();
+        const resized = await sharp(buffer)
+          .resize({ width: 1280, height: 960, fit: "cover", position: "centre" })
+          .jpeg({ quality: 85 })
+          .toBuffer();
+
+        // Save first successfully downloaded image as fallback
+        if (!fallbackSaved) {
+          fs.writeFileSync(outputPath, resized);
+          fallbackSaved = true;
+        }
+
+        // Validate with AI if facilityType specified
+        if (facilityType) {
+          const validation = await validateShuhenImage(resized, facilityType);
+          if (!validation.valid) {
+            console.log(`[google-img] Rejected: ${validation.reason}`);
+            continue;
+          }
+          console.log(`[google-img] Validated OK for ${facilityType}`);
+        }
+
+        // Valid image — save and return
+        fs.writeFileSync(outputPath, resized);
+        console.log(`[google-img] Saved: ${path.basename(outputPath)}`);
+        return outputPath;
+      } catch {
+        continue;
+      }
+    }
+
+    // Return fallback if saved
+    if (fallbackSaved) {
+      console.log(`[google-img] Saved (fallback, no validated): ${path.basename(outputPath)}`);
       return outputPath;
     }
 
@@ -101,11 +190,7 @@ async function googleImageSearch(context, query, outputPath) {
 
 /**
  * Fetch surrounding environment photos using Google Maps + Image search
- *
- * Flow:
- * 1. Google Maps search for facilities near the property
- * 2. Google Image search for each facility name
- * 3. Download and resize 6 photos
+ * with AI validation for quality control.
  *
  * @param {import('playwright').BrowserContext} context
  * @param {object} reinsData - REINS property data
@@ -122,14 +207,13 @@ async function fetchShuhenPhotos(context, reinsData, downloadDir) {
     return [];
   }
 
-  // Required facility types with Google Maps search terms
   const facilityTypes = [
     { type: "コンビニ", query: "コンビニ" },
     { type: "スーパー", query: "スーパーマーケット" },
     { type: "ドラッグストア", query: "ドラッグストア 薬局" },
-    { type: "郵便局", query: "郵便局" },
     { type: "病院", query: "病院 クリニック" },
-    { type: "学校", query: "小学校" },
+    { type: "飲食店", query: "レストラン 飲食店" },
+    { type: "コンビニ", query: "コンビニエンスストア" },
   ];
 
   // Step 1: Search Google Maps for nearby facilities
@@ -145,15 +229,16 @@ async function fetchShuhenPhotos(context, reinsData, downloadDir) {
 
       try {
         await page.goto(mapUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(4000);
 
-        // Extract first facility name from results
         const facilityName = await page.evaluate(() => {
-          // Google Maps results show facility names in various elements
           const candidates = [
             ...document.querySelectorAll('[role="feed"] a[aria-label]'),
             ...document.querySelectorAll('.fontHeadlineSmall'),
             ...document.querySelectorAll('h3.fontHeadlineSmall'),
+            ...document.querySelectorAll('[jstcache] .fontBodyMedium a'),
+            ...document.querySelectorAll('.Nv2PK a[aria-label]'),
+            ...document.querySelectorAll('[role="article"] a[aria-label]'),
           ];
           for (const el of candidates) {
             const name = (el.ariaLabel || el.textContent || "").trim();
@@ -166,7 +251,6 @@ async function fetchShuhenPhotos(context, reinsData, downloadDir) {
           facilities.push({ name: facilityName, type: ft.type });
           console.log(`[google-img] Maps: ${ft.type} → ${facilityName}`);
         } else {
-          // Fallback: use generic facility name
           facilities.push({ name: `${address}付近の${ft.type}`, type: ft.type });
           console.log(`[google-img] Maps: ${ft.type} → generic fallback`);
         }
@@ -179,14 +263,14 @@ async function fetchShuhenPhotos(context, reinsData, downloadDir) {
     await page.close().catch(() => {});
   }
 
-  // Step 2: Google Image search for each facility
+  // Step 2: Google Image search for each facility (with AI validation)
   const results = [];
   for (let i = 0; i < facilities.length && i < 6; i++) {
     const facility = facilities[i];
     const outputPath = path.join(outDir, `shuhen_${i + 1}_${facility.type}.jpg`);
     const query = `${facility.name} 外観`;
 
-    const saved = await googleImageSearch(context, query, outputPath);
+    const saved = await googleImageSearch(context, query, outputPath, facility.type);
     if (saved) {
       results.push({
         localPath: saved,

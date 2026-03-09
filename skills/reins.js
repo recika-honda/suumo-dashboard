@@ -186,6 +186,24 @@ async function extractPropertyData(page) {
       }
     }
 
+    // 建物名から号室情報を除去（forrent.jpでは物件名と号室は別フィールド）
+    if (result.建物名) {
+      // 部屋番号が別途取得できている場合、その番号パターンを末尾から除去
+      if (result.部屋番号) {
+        const roomNum = result.部屋番号.replace(/\D/g, "");
+        if (roomNum) {
+          result.建物名 = result.建物名
+            .replace(new RegExp(`[\\s　]+${roomNum}号室?$`), "")
+            .replace(new RegExp(`[\\s　]+${roomNum}$`), "");
+        }
+      }
+      // 一般的な号室パターンを末尾から除去（半角・全角両対応）
+      result.建物名 = result.建物名
+        .replace(/[\s　]+[0-9０-９]+号室$/g, "")
+        .replace(/[\s　]+[0-9０-９]+号$/g, "")
+        .trim();
+    }
+
     // Extract transportation (up to 3 lines)
     const transportPatterns = [
       {

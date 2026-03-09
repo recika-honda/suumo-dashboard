@@ -1523,22 +1523,42 @@ async function uploadImages(mainFrame, processedImages) {
     } else if (SHUHEN_CATS.includes(cat) && shuhenN <= 6) {
       const currentShuhen = shuhenN;
       inputName = `shuhenKankyo${shuhenN++}File`;
-      // Required categories per slot: コンビニ/スーパー/ドラッグストア/郵便局 + extras
+      // Required categories per slot: コンビニ/スーパー/ドラッグストア/病院/飲食店 etc.
+      // NOTE: 070201(郵便局), 080101(学校) 等の非ショッピング系コードは
+      // mokuteki selectに存在しない可能性があるため除外
       const SHUHEN_CATEGORIES = [
         { code: "060203", name: "コンビニ" },
         { code: "060201", name: "スーパー" },
         { code: "060210", name: "ドラッグストア" },
-        { code: "070201", name: "郵便局" },
         { code: "060207", name: "病院" },
         { code: "060204", name: "飲食店" },
+        { code: "060203", name: "コンビニ" },
       ];
-      const catInfo = SHUHEN_CATEGORIES[currentShuhen - 1] || SHUHEN_CATEGORIES[0];
+      // facilityTypeがある場合は画像の実際の施設種別に合ったカテゴリを使用
+      const SHUHEN_TYPE_MAP = {
+        "コンビニ": { code: "060203", name: "コンビニ" },
+        "スーパー": { code: "060201", name: "スーパー" },
+        "ドラッグストア": { code: "060210", name: "ドラッグストア" },
+        "郵便局": { code: "060207", name: "病院" },
+        "病院": { code: "060207", name: "病院" },
+        "学校": { code: "060207", name: "病院" },
+      };
+      const catInfo = (img.facilityType && SHUHEN_TYPE_MAP[img.facilityType])
+        || SHUHEN_CATEGORIES[currentShuhen - 1]
+        || SHUHEN_CATEGORIES[0];
+      const destName = img.facilityName || catInfo.name;
       try {
-        await mainFrame.evaluate(({ n, catCode, catName }) => {
+        const metaResult = await mainFrame.evaluate(({ n, catCode, catName }) => {
           const catEl = document.getElementById(`mokuteki${n}`);
+          let catSet = false;
           if (catEl) {
-            catEl.value = catCode;
-            catEl.dispatchEvent(new Event("change", { bubbles: true }));
+            // mokuteki selectにコードが存在するか確認してから設定
+            const hasOption = [...catEl.options].some(o => o.value === catCode);
+            if (hasOption) {
+              catEl.value = catCode;
+              catEl.dispatchEvent(new Event("change", { bubbles: true }));
+              catSet = true;
+            }
           }
           const nameEl = document.getElementById(`destination${n}`);
           if (nameEl) {
@@ -1550,8 +1570,9 @@ async function uploadImages(mainFrame, processedImages) {
             distEl.value = "100";
             distEl.dispatchEvent(new Event("input", { bubbles: true }));
           }
-        }, { n: currentShuhen, catCode: catInfo.code, catName: catInfo.name });
-        console.log(`[forrent] + 周辺環境${currentShuhen}メタ: ${catInfo.name}/100m`);
+          return { catSet };
+        }, { n: currentShuhen, catCode: catInfo.code, catName: destName });
+        console.log(`[forrent] + 周辺環境${currentShuhen}メタ: ${destName}(${catInfo.name})/100m${metaResult.catSet ? "" : " [mokutekiコード無効]"}`);
       } catch (e) {
         console.log(`[forrent] x 周辺環境メタ: ${e.message.slice(0, 60)}`);
       }
@@ -1651,7 +1672,7 @@ async function uploadImages(mainFrame, processedImages) {
       { code: "060203", name: "コンビニ" },
       { code: "060201", name: "スーパー" },
       { code: "060210", name: "ドラッグストア" },
-      { code: "070201", name: "郵便局" },
+      { code: "060207", name: "病院" },
     ];
     for (let si = 0; si < FALLBACK_SHUHEN.length && (shuhenN + si) <= 6; si++) {
       const slotN = si + 1;
@@ -1662,7 +1683,13 @@ async function uploadImages(mainFrame, processedImages) {
           uploaded.push(fallbackImg.localPath);
           await mainFrame.evaluate(({ n, catCode, catName }) => {
             const catEl = document.getElementById(`mokuteki${n}`);
-            if (catEl) { catEl.value = catCode; catEl.dispatchEvent(new Event("change", { bubbles: true })); }
+            if (catEl) {
+              const hasOption = [...catEl.options].some(o => o.value === catCode);
+              if (hasOption) {
+                catEl.value = catCode;
+                catEl.dispatchEvent(new Event("change", { bubbles: true }));
+              }
+            }
             const nameEl = document.getElementById(`destination${n}`);
             if (nameEl) { nameEl.value = catName; nameEl.dispatchEvent(new Event("input", { bubbles: true })); }
             const distEl = document.getElementById(`distance${n}`);

@@ -125,6 +125,8 @@ async function runNyuko(socket, reinsId) {
             localPath: photo.localPath,
             categoryId: "14",
             categoryLabel: "周辺環境",
+            facilityType: photo.facilityType,
+            facilityName: photo.facilityName,
             sourceIndex: 200 + shuhenPhotos.indexOf(photo),
           });
         }
@@ -154,7 +156,7 @@ async function runNyuko(socket, reinsId) {
     }
 
     emit(5, "running", "新規物件登録フォームに移動中...");
-    const { mainFrame } = await forrent.navigateToNewProperty(forrentPage);
+    let { mainFrame } = await forrent.navigateToNewProperty(forrentPage);
 
     emit(5, "running", "フォームフィールドを入力中...");
     const { filled, errors: formErrors } = await forrent.fillPropertyForm(
@@ -186,9 +188,32 @@ async function runNyuko(socket, reinsId) {
     emit(5, "running", "交通情報を入力中...");
     const transportResult = await forrent.fillTransportViaMap(forrentPage, mainFrame, reinsData.交通);
 
+    // ポップアップ操作後にmainFrameを再取得（フレーム参照が無効化される場合がある）
+    mainFrame = forrentPage.frame({ name: "main" }) || mainFrame;
+
     // 周辺環境入力（らくらく周辺環境）
     emit(5, "running", "周辺環境を入力中...");
     const shuhenResult = await forrent.fillShuhenKankyo(forrentPage, mainFrame);
+
+    // ポップアップ操作後にmainFrameを再取得
+    mainFrame = forrentPage.frame({ name: "main" }) || mainFrame;
+
+    // 周辺環境の施設名をポップアップ結果から画像メタデータへ同期
+    try {
+      await mainFrame.evaluate(() => {
+        for (let i = 0; i < 6; i++) {
+          const nameEl = document.querySelector(`input[name="bukkenInputForm.shuhenKankyoInputForm[${i}].shuhenKankyoNm"]`);
+          const destEl = document.getElementById(`destination${i + 1}`);
+          if (nameEl && nameEl.value && destEl) {
+            destEl.value = nameEl.value;
+            destEl.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        }
+      });
+      console.log("[server] 周辺環境名称を画像メタデータに同期完了");
+    } catch (e) {
+      console.log(`[server] 周辺環境名称同期スキップ: ${e.message.slice(0, 60)}`);
+    }
 
     const allErrors = [
       ...formErrors,

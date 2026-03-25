@@ -588,9 +588,10 @@ async function fillPropertyForm(mainFrame, reinsData) {
   // etcHiyoFlg + etcHiyo1(万) + etcHiyo2(千) — 鍵交換代等
   try {
     await setCheckbox(mainFrame, "etcHiyoFlg", true, "その他費用");
-    // REINS備考3から金額抽出を試みる（例: "鍵交換代18700円"）
-    const biko3 = norm(reinsData.備考3 || "");
-    const etcMatch = biko3.match(/鍵交換[代費]?\D*([\d,.]+)\s*円/);
+    // REINS全備考フィールドから金額抽出を試みる（例: "鍵交換代18700円"）
+    const allBiko = norm([reinsData.備考1, reinsData.備考2, reinsData.備考3,
+      reinsData.条件フリー, reinsData.その他一時金].filter(Boolean).join(" "));
+    const etcMatch = allBiko.match(/鍵交換[代費]?\D*([\d,.]+)\s*円/);
     if (etcMatch) {
       const yen = parseInt(etcMatch[1].replace(/[,\.]/g, ""));
       const man = Math.floor(yen / 10000);
@@ -629,20 +630,31 @@ async function fillPropertyForm(mainFrame, reinsData) {
   }
 
   // ═══ 19. 保証人代行会社区分 ═══
-  // hoshoninDaikoKaishaKbnCd: select → "2" (その他) + 保証会社名を常に入力
+  // hoshoninDaikoKaishaKbnCd: select → "2" (その他) + 保証会社名・保証料詳細を入力
   try {
     await selectByName(mainFrame, `${S}hoshoninDaikoKaishaKbnCd}`, "2", "保証人代行会社");
     await mainFrame.waitForTimeout(300);
-    // Extract guarantor company name from REINS biko/joukenFree
-    const bikoText = norm(reinsData.備考3 || "");
-    const joukenText = norm(reinsData.条件フリー || "");
-    const combinedText = bikoText + " " + joukenText;
+    // Extract guarantor company name + details from ALL REINS biko/free fields
+    const combinedText = norm([reinsData.備考1, reinsData.備考2, reinsData.備考3,
+      reinsData.条件フリー, reinsData.設備フリー, reinsData.その他一時金].filter(Boolean).join(" "));
     // Try to extract specific company name
-    let hoshoCompany = "保証会社利用必須";
+    let hoshoCompanyName = "";
     const companyMatch = combinedText.match(/(全保連|日本セーフティー?|日本セーフティ|Casa|CASA|カーサ|ジェイリース|オリコ|エポス|クレジット|ジャックス|アプラス|日本賃貸保証|フォーシーズ|エルズサポート|日商トレーディング|ナップ賃貸保証|大和リビング保証|レジデンシャルパートナーズ)/i);
     if (companyMatch) {
-      hoshoCompany = companyMatch[1];
+      hoshoCompanyName = companyMatch[1];
     }
+    // Extract guarantee fee details (保証料率, 初回保証料, 更新料 etc.)
+    const hoshoDetails = [];
+    const feeMatch = combinedText.match(/(?:初回)?保証(?:委託)?料?\s*[:：]?\s*(?:(?:賃料等?)?(?:合計)?の?)?\s*(\d+[%％]?(?:[～~〜]\d+[%％]?)?)/);
+    if (feeMatch) hoshoDetails.push(`初回保証料:${feeMatch[1]}`);
+    const renewMatch = combinedText.match(/(?:年間|毎年|更新)\s*(?:保証料|更新料)\s*[:：]?\s*([\d,.]+\s*円)/);
+    if (renewMatch) hoshoDetails.push(`更新料:${renewMatch[1]}`);
+    // Build unified format: 保証会社利用必須。{会社名}。{保証料}。詳細お問い合わせください
+    const parts = ["保証会社利用必須"];
+    if (hoshoCompanyName) parts.push(hoshoCompanyName);
+    if (hoshoDetails.length > 0) parts.push(hoshoDetails.join(" "));
+    parts.push("詳細お問い合わせください");
+    const hoshoCompany = parts.join("。");
     await fillByName(mainFrame, `${S}hoshoninDaikoShosai}`, hoshoCompany, "保証会社名");
     filled["保証人代行会社"] = true;
   } catch (e) {
@@ -940,9 +952,10 @@ async function fillConditionRadios(mainFrame, reinsData, ok) {
   const combined = [setsubi, joukenFree, biko, setsubiFree].join(" ");
 
   // Detect pet/instrument/office/roomshare from REINS data
-  // 2-choice radio: idx0=不可, idx1=可
+  // 3-choice radio: idx0=不可, idx1=可, idx2=相談
+  // ペット飼育可能な場合でも「相談」(idx=2)を設定（先方運用統一）
   if (/ペット可|ペット相談|ペットOK|ペット飼育可|小型犬|猫/.test(combined)) {
-    overrides["petKbnCd"] = 1; // 可
+    overrides["petKbnCd"] = 2; // 相談
   }
   if (/楽器可|楽器相談|楽器OK|ピアノ可/.test(combined)) {
     overrides["gakkiKbnCd"] = 1; // 可
@@ -1255,8 +1268,11 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData) {
   const truncCatch = (catchCopy || "").slice(0, 30);
   const truncComment = (freeComment || "").slice(0, 100);
 
-  // REINS備考情報から特記事項テキストを構築
-  const biko = reinsData ? (reinsData.備考3 || reinsData.条件フリー || "") : "";
+  // REINS備考情報から特記事項テキストを構築（全備考+フリースペース+一時金を結合して漏れ防止）
+  const biko = reinsData
+    ? [reinsData.備考1, reinsData.備考2, reinsData.備考3,
+       reinsData.条件フリー, reinsData.設備フリー, reinsData.その他一時金].filter(Boolean).join(" ")
+    : "";
   const truncBiko = biko.slice(0, 200);
 
   // Fixed text for net-facing fields (staff request)
@@ -1294,13 +1310,15 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData) {
       // etcHiyoShosai: etcHiyoFlg=ON時に必須
       // hoshoninDaikoShosai: 保証人代行会社の詳細
       const nameFields = [];
-      // Extract only initial cost-related text from biko (not full text which may contain walk-to-station info)
+      // Extract initial cost-related text from biko
+      // Split by 、。\n only (NOT spaces/half-width commas — those break amounts like "22,000円")
       let etcText = '鍵交換代・その他初期費用';
       if (biko) {
         const costKeywords = ['鍵交換', '消毒', 'クリーニング', '保険', '損保', '火災', '初期費用',
           '鍵代', '消臭', '室内清掃', '安心サポート', '入居サポート', '24時間サポート',
-          '抗菌', '害虫駆除', '仲介手数料', '事務手数料', '書類作成'];
-        const sentences = biko.split(/[、。,\s\/]+/).filter(Boolean);
+          '抗菌', '害虫駆除', '仲介手数料', '事務手数料', '書類作成', '契約事務',
+          'サポート代', 'サポート費', '保証料', '更新料', '更新事務'];
+        const sentences = biko.split(/[、。\n]+/).map(s => s.trim()).filter(Boolean);
         const costParts = sentences.filter(s => costKeywords.some(k => s.includes(k)));
         if (costParts.length > 0) {
           etcText = costParts.join('、');
@@ -1528,20 +1546,21 @@ async function uploadImages(mainFrame, processedImages) {
       // mokuteki selectに存在しない可能性があるため除外
       const SHUHEN_CATEGORIES = [
         { code: "060203", name: "コンビニ" },
-        { code: "060201", name: "スーパー" },
-        { code: "060210", name: "ドラッグストア" },
-        { code: "060207", name: "病院" },
-        { code: "060204", name: "飲食店" },
-        { code: "060203", name: "コンビニ" },
+        { code: "060202", name: "スーパー" },
+        { code: "060204", name: "ドラッグストア" },
+        { code: "060210", name: "病院" },
+        { code: "060218", name: "飲食店" },
+        { code: "060211", name: "郵便局" },
       ];
       // facilityTypeがある場合は画像の実際の施設種別に合ったカテゴリを使用
       const SHUHEN_TYPE_MAP = {
         "コンビニ": { code: "060203", name: "コンビニ" },
-        "スーパー": { code: "060201", name: "スーパー" },
-        "ドラッグストア": { code: "060210", name: "ドラッグストア" },
-        "郵便局": { code: "060207", name: "病院" },
-        "病院": { code: "060207", name: "病院" },
-        "学校": { code: "060207", name: "病院" },
+        "スーパー": { code: "060202", name: "スーパー" },
+        "ドラッグストア": { code: "060204", name: "ドラッグストア" },
+        "飲食店": { code: "060218", name: "飲食店" },
+        "郵便局": { code: "060211", name: "郵便局" },
+        "病院": { code: "060210", name: "病院" },
+        "学校": { code: "060207", name: "学校" },
       };
       const catInfo = (img.facilityType && SHUHEN_TYPE_MAP[img.facilityType])
         || SHUHEN_CATEGORIES[currentShuhen - 1]
@@ -1664,44 +1683,11 @@ async function uploadImages(mainFrame, processedImages) {
     }
   }
 
-  // ★ 周辺環境画像スロットのフォールバック
-  // cat_14（周辺環境）画像がREINSになかった場合、外観画像で代用して必須4カテゴリを設定
-  if (shuhenN === 1 && items.length > 0) {
-    const fallbackImg = items.find(img => GAIKAN_CATS.includes(img.categoryLabel || "")) || items[0];
-    const FALLBACK_SHUHEN = [
-      { code: "060203", name: "コンビニ" },
-      { code: "060201", name: "スーパー" },
-      { code: "060210", name: "ドラッグストア" },
-      { code: "060207", name: "病院" },
-    ];
-    for (let si = 0; si < FALLBACK_SHUHEN.length && (shuhenN + si) <= 6; si++) {
-      const slotN = si + 1;
-      const cat = FALLBACK_SHUHEN[si];
-      try {
-        const okResult = await setFileInput(mainFrame, `shuhenKankyo${slotN}File`, fallbackImg.localPath);
-        if (okResult) {
-          uploaded.push(fallbackImg.localPath);
-          await mainFrame.evaluate(({ n, catCode, catName }) => {
-            const catEl = document.getElementById(`mokuteki${n}`);
-            if (catEl) {
-              const hasOption = [...catEl.options].some(o => o.value === catCode);
-              if (hasOption) {
-                catEl.value = catCode;
-                catEl.dispatchEvent(new Event("change", { bubbles: true }));
-              }
-            }
-            const nameEl = document.getElementById(`destination${n}`);
-            if (nameEl) { nameEl.value = catName; nameEl.dispatchEvent(new Event("input", { bubbles: true })); }
-            const distEl = document.getElementById(`distance${n}`);
-            if (distEl) { distEl.value = "100"; distEl.dispatchEvent(new Event("input", { bubbles: true })); }
-          }, { n: slotN, catCode: cat.code, catName: cat.name });
-          console.log(`[forrent] + image(shuhen-fallback): shuhenKankyo${slotN}File <- ${fallbackImg.localPath.split("/").pop()} as ${cat.name}`);
-        }
-        await mainFrame.waitForTimeout(1000);
-      } catch (e) {
-        console.log(`[forrent] x shuhen-fallback(${slotN}): ${e.message.slice(0, 60)}`);
-      }
-    }
+  // ★ 周辺環境画像フォールバック削除
+  // 外観写真を周辺環境として使うのは不適切（先方フィードバック: 全て物件の外観写真になるケースあり）
+  // 周辺環境写真がない場合はスロットを空のままにする（らくらく周辺環境ポップアップで補完）
+  if (shuhenN === 1) {
+    console.log(`[forrent] 周辺環境画像なし → スロット空（外観フォールバック無効化済み）`);
   }
 
   console.log(`[forrent] images: ${uploaded.length} uploaded, ${errors.length} errors`);
@@ -2280,6 +2266,42 @@ async function fillShuhenKankyo(page, mainFrame) {
     for (const s of shuhenResult) {
       filled.push(`${s.name} / ${s.kyori}m / ${s.cat}`);
       console.log(`[forrent] + 周辺: ${s.name} / ${s.kyori}m / ${s.cat} (${s.catCd})`);
+    }
+
+    // ポップアップ後にcategoryCdが空のスロットを補完
+    // 郵便局・学校等はポップアップが自動設定しないため手動で設定
+    try {
+      await mainFrame.evaluate(() => {
+        const NAME_TO_CODE = {
+          "コンビニ": "060203", "セブン": "060203", "ファミリーマート": "060203", "ローソン": "060203", "ミニストップ": "060203",
+          "スーパー": "060201", "マルエツ": "060201", "まいばすけっと": "060201", "成城石井": "060201", "ライフ": "060201",
+          "ドラッグ": "060210", "薬局": "060210", "スギ薬局": "060210", "マツモトキヨシ": "060210",
+          "病院": "060207", "クリニック": "060207", "医院": "060207",
+          "学校": "060207", "小学校": "060207", "中学校": "060207",
+          "郵便局": "060201",
+          "飲食": "060204", "レストラン": "060204",
+        };
+        for (let i = 0; i < 6; i++) {
+          const catEl = document.querySelector(`select[name="bukkenInputForm.shuhenKankyoInputForm[${i}].categoryCd"]`);
+          if (!catEl || (catEl.value && catEl.value !== "")) continue;
+          const nameEl = document.querySelector(`input[name="bukkenInputForm.shuhenKankyoInputForm[${i}].shuhenKankyoNm"]`);
+          const name = nameEl?.value || "";
+          if (!name) continue;
+          // 施設名からカテゴリコードを推測
+          let code = "";
+          for (const [keyword, c] of Object.entries(NAME_TO_CODE)) {
+            if (name.includes(keyword)) { code = c; break; }
+          }
+          if (!code) code = "060201"; // フォールバック: ショッピングセンター
+          const hasOption = [...catEl.options].some(o => o.value === code);
+          if (hasOption) {
+            catEl.value = code;
+            catEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }
+      });
+    } catch (e) {
+      console.log(`[forrent] 周辺カテゴリ補完: ${e.message.slice(0, 60)}`);
     }
 
     if (filled.length === 0) {

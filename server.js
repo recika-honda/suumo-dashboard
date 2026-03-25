@@ -11,7 +11,7 @@ const { chromium } = require("playwright");
 
 const reins = require("./skills/reins");
 const forrent = require("./skills/forrent");
-const { analyzeAndCropImages } = require("./skills/image-ai");
+const { analyzeAndCropImages, cropMissingCategories } = require("./skills/image-ai");
 const { generateTexts } = require("./skills/text-ai");
 const { checkImageSufficiency, fetchBukakuImages } = require("./skills/bukaku-images");
 const { fetchShuhenPhotos } = require("./skills/google-images");
@@ -112,6 +112,21 @@ async function runNyuko(socket, reinsId) {
       }
 
       emit(3, "done", `${processedImages.length}枚`);
+    }
+
+    // ── Step 3.6: 既存画像から不足カテゴリを切り抜き補完 ──
+    sufficiency = checkImageSufficiency(processedImages);
+    if (sufficiency.missing5pt.length > 0) {
+      emit(3, "running", `不足カテゴリ(${sufficiency.missing5pt.join(",")})を既存画像から切り抜き中...`);
+      try {
+        const cropped = await cropMissingCategories(processedImages, downloaded, downloadDir);
+        if (cropped.length > 0) {
+          processedImages.push(...cropped);
+          emit(3, "running", `切り抜き${cropped.length}枚追加`);
+        }
+      } catch (e) {
+        console.error("[crop] Error:", e.message);
+      }
     }
 
     // ── Step 3.7: 周辺環境写真をGoogle Mapsから取得 ──

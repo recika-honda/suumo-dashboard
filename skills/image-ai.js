@@ -39,7 +39,7 @@ async function classifySingleImage(imageBuffer, availableCategories) {
   const catList = availableCategories.map((c) => `${c.id}=${c.label}`).join(", ");
 
   const response = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
+    model: "claude-sonnet-4-6",
     max_tokens: 50,
     messages: [
       {
@@ -61,7 +61,7 @@ async function classifySingleImage(imageBuffer, availableCategories) {
 
 判定基準（画像に実際に写っているもので判断）:
 - 間取り図・平面図・フロアプラン → 必ず04
-- 建物の外観写真（外から撮影） → 05
+- 建物の外観写真（外から撮影、建物全体や一部が空・道路・植栽と共に写っている） → 05
 - リビング・ダイニング・居間（広い部屋、ソファ、テーブル） → 01
 - 洋室（ベッド、クローゼットのある個室） → 06
 - キッチン（コンロ、シンク、調理台が写っている） → 02
@@ -70,7 +70,10 @@ async function classifySingleImage(imageBuffer, availableCategories) {
 - 洗面台・洗面所（洗面ボウル、鏡） → 09
 - QRコードの画像 → 「QR」とだけ回答
 
-重要: 画像に実際に写っているものだけで判断してください。外部情報に頼らないでください。
+重要ルール:
+- 画像に実際に写っているものだけで判断。外部情報に頼らない。
+- 05(外観)は「建物を外から撮影した写真」のみ。室内の壁・床・天井・窓が見える場合は外観ではなく室内カテゴリ(01,02,03,06,08,09等)。
+- 窓から外の景色が見えても、撮影位置が室内なら外観(05)ではない。
 
 IDのみ回答（例: 01）。`,
           },
@@ -219,4 +222,147 @@ async function analyzeAndCropImages(downloaded, downloadDir, existingCategories 
   });
 }
 
-module.exports = { analyzeAndCropImages, SUUMO_CATEGORIES };
+/**
+ * 不足5ptカテゴリを既存画像から部分切り抜きで補完
+ *
+ * 例: リビング写真の端にキッチンが写っている → そこだけ切り抜いてキッチン画像にする
+ *
+ * @param {Array} processedImages - 分類済み画像リスト
+ * @param {Array<{index: number, localPath: string}>} downloaded - 元画像リスト
+ * @param {string} downloadDir - 出力ディレクトリ
+ * @returns {Array} 新たに生成された画像リスト
+ */
+async function cropMissingCategories(processedImages, downloaded, downloadDir) {
+  const outputDir = path.join(downloadDir, "processed");
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  const presentCats = new Set(processedImages.map(img => img.categoryId));
+
+  // 切り抜き可能な5ptカテゴリのみ対象（間取り04・外観05は他写真から切り出せない）
+  const CROPPABLE = [
+    { id: "01", label: "居室・リビング", hint: "リビング、ダイニング、居間（広い部屋、ソファ、テーブル）" },
+    { id: "02", label: "キッチン", hint: "キッチン、コンロ、シンク、調理台、IHクッキングヒーター" },
+    { id: "03", label: "バス・シャワー", hint: "浴室、浴槽、シャワー、バスルーム" },
+  ];
+
+  const missingCats = CROPPABLE.filter(c => !presentCats.has(c.id));
+  if (missingCats.length === 0) return [];
+
+  // 実写真を優先、間取り図(04)・外観(05)は最後の手段として使用
+  const floorPlanIndices = new Set(
+    processedImages
+      .filter(img => img.categoryId === "04" || img.categoryId === "05")
+      .map(img => img.sourceIndex)
+  );
+  const photoSources = downloaded.filter(
+    img => fs.existsSync(img.localPath) && !floorPlanIndices.has(img.index)
+  );
+  const diagramSources = downloaded.filter(
+    img => fs.existsSync(img.localPath) && floorPlanIndices.has(img.index)
+  );
+  // 実写真 → 間取り図/外観の順で試行
+  const sourceImages = [...photoSources, ...diagramSources];
+  if (sourceImages.length === 0) return [];
+
+  const newImages = [];
+
+  for (const target of missingCats) {
+    let found = false;
+
+    for (const srcImg of sourceImages) {
+      if (found) break;
+
+      let buffer;
+      try {
+        buffer = fs.readFileSync(srcImg.localPath);
+      } catch { continue; }
+
+      // Vision: この画像に対象エリアが部分的に写っているか判定 + 切り抜き座標取得
+      try {
+        const response = await client.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 200,
+          messages: [{
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: "image/jpeg", data: buffer.toString("base64") },
+              },
+              {
+                type: "text",
+                text: `この不動産写真の一部に「${target.label}」エリアが写っていますか？
+探す対象: ${target.hint}
+
+判定ルール:
+- 写真のメインの被写体でなくても、背景や端に写っていればOK
+- 対象エリアが画像面積の10%以上を占めていること
+- 明確に識別できること（ぼやけていたり極端に小さい場合はNG）
+
+写っている場合、切り抜き座標をJSON形式で回答:
+{"found":true,"x":左端パーセント,"y":上端パーセント,"w":幅パーセント,"h":高さパーセント}
+座標は画像全体に対する割合(0-100)。対象エリアを中心に余裕を持って指定。
+
+写っていない場合: {"found":false}
+JSONのみ回答。`,
+              },
+            ],
+          }],
+        });
+
+        const text = response.content[0].text.trim();
+        const jsonMatch = text.match(/\{[^}]+\}/);
+        if (!jsonMatch) continue;
+
+        const result = JSON.parse(jsonMatch[0]);
+        if (!result.found) continue;
+
+        // 座標バリデーション
+        const { x, y, w, h } = result;
+        if (typeof x !== "number" || typeof y !== "number" || typeof w !== "number" || typeof h !== "number") continue;
+        if (w < 10 || h < 10 || x < 0 || y < 0 || x + w > 105 || y + h > 105) continue;
+
+        // Sharp で切り抜き
+        const metadata = await sharp(buffer).metadata();
+        const imgW = metadata.width || 1280;
+        const imgH = metadata.height || 960;
+
+        const cropX = Math.max(0, Math.round(imgW * Math.min(x, 100) / 100));
+        const cropY = Math.max(0, Math.round(imgH * Math.min(y, 100) / 100));
+        const cropW = Math.min(Math.round(imgW * Math.min(w, 100) / 100), imgW - cropX);
+        const cropH = Math.min(Math.round(imgH * Math.min(h, 100) / 100), imgH - cropY);
+
+        if (cropW < 100 || cropH < 100) continue;
+
+        const outPath = path.join(outputDir, `crop_${target.id}_from${srcImg.index}.jpg`);
+        await sharp(buffer)
+          .extract({ left: cropX, top: cropY, width: cropW, height: cropH })
+          .resize({ width: 1280, height: 960, fit: "cover", position: "centre" })
+          .jpeg({ quality: 85 })
+          .toFile(outPath);
+
+        newImages.push({
+          localPath: outPath,
+          categoryId: target.id,
+          categoryLabel: target.label,
+          sourceIndex: srcImg.index,
+          cropped: true,
+        });
+
+        console.log(`[image] CROP: ${target.label} extracted from image #${srcImg.index} (${x},${y} ${w}x${h}%) → ${path.basename(outPath)}`);
+        found = true;
+      } catch (err) {
+        // JSON parse error or sharp error — skip to next image
+        continue;
+      }
+    }
+
+    if (!found) {
+      console.log(`[image] CROP: ${target.label} not found in any source image`);
+    }
+  }
+
+  return newImages;
+}
+
+module.exports = { analyzeAndCropImages, cropMissingCategories, SUUMO_CATEGORIES };

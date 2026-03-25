@@ -39,29 +39,33 @@ async function readNayoseScore(page) {
       { key: "動画CM", regex: /(?:動画|CM).*?(\d+)\s*点/s },
     ];
 
-    let sum = 0;
-    for (const p of patterns) {
-      const m = body.match(p.regex);
-      if (m) {
-        const pts = parseInt(m[1]);
-        breakdown[p.key] = pts;
-        sum += pts;
-      }
-    }
-
-    // Try to find the total score directly
+    // Try to find the total score directly (confirmation page only shows total)
     const totalPatterns = [
       /名寄せスコア[：:\s]*(\d+)/,
       /SUUMO採点[：:\s]*(\d+)/,
       /合計[：:\s]*(\d+)\s*点/,
       /スコア[：:\s]*(\d+)/,
     ];
-    let total = sum;
+    let total = 0;
     for (const re of totalPatterns) {
       const m = body.match(re);
       if (m) {
         total = parseInt(m[1]);
         break;
+      }
+    }
+
+    // Per-category breakdown: only trust matches where the score differs from total
+    // (confirmation page has no per-category scores; patterns false-match the total)
+    let sum = 0;
+    for (const p of patterns) {
+      const m = body.match(p.regex);
+      if (m) {
+        const pts = parseInt(m[1]);
+        if (pts !== total && pts <= 5) {
+          breakdown[p.key] = pts;
+          sum += pts;
+        }
       }
     }
 

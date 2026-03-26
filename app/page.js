@@ -11,7 +11,7 @@ const STEPS = [
   { label: "AI 画像処理 + 周辺環境", icon: "sparkle" },
   { label: "AI テキスト生成", icon: "text" },
   { label: "SUUMO フォーム入力", icon: "upload" },
-  { label: "確認画面 / スコア", icon: "chart" },
+  { label: "一時保存", icon: "chart" },
 ];
 
 export default function NyukoPage() {
@@ -326,13 +326,16 @@ function DonePhase({ result, errorMsg, reinsId, onReset }) {
 
   if (!result) return null;
 
+  const hasDraft = result.draftSaved === true;
   const hasScore = result.score !== null && result.score !== undefined;
   const scoreColor = hasScore
     ? result.score >= 40 ? "emerald" : result.score >= 35 ? "amber" : "red"
     : "white";
-  const glowClass = hasScore
-    ? result.score >= 40 ? "glow-success border-emerald-500/20" : "glow-accent border-violet-500/20"
-    : "glow-accent border-violet-500/20";
+  const glowClass = hasDraft
+    ? "glow-success border-emerald-500/20"
+    : hasScore
+      ? result.score >= 40 ? "glow-success border-emerald-500/20" : "glow-accent border-violet-500/20"
+      : "glow-accent border-violet-500/20";
 
   return (
     <motion.div
@@ -341,16 +344,21 @@ function DonePhase({ result, errorMsg, reinsId, onReset }) {
       exit={{ opacity: 0, y: -12 }}
       className="flex flex-col items-center gap-5"
     >
-      {/* Score header */}
+      {/* Status header */}
       <div className={`w-full max-w-md glass rounded-xl p-6 ${glowClass}`}>
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className={`text-sm font-semibold ${hasScore && result.score >= 40 ? "text-emerald-400" : "text-violet-400"}`}>
-              入稿完了
+            <h3 className={`text-sm font-semibold ${hasDraft ? "text-emerald-400" : hasScore && result.score >= 40 ? "text-emerald-400" : "text-violet-400"}`}>
+              {hasDraft ? "一時保存完了" : "入稿完了"}
             </h3>
             <p className="text-xs text-white/30 mt-0.5">
               {result.propertyName || reinsId}
             </p>
+            {hasDraft && (
+              <p className="text-[10px] text-emerald-400/60 mt-1">
+                forrent.jpで確認 → 本登録してください
+              </p>
+            )}
           </div>
           {hasScore && (
             <div className="text-right">

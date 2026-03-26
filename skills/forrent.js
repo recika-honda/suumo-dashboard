@@ -232,7 +232,7 @@ async function login(page, credentials) {
   return page.url().includes("main_r.action");
 }
 
-async function navigateToNewProperty(page) {
+async function navigateToNewProperty(page, { deleteDraft = true } = {}) {
   const naviFrame = page.frame({ name: "navi" });
   if (!naviFrame) throw new Error("Navi frame not found");
   await naviFrame.click(FORRENT_SELECTORS.navi.menuNewProperty);
@@ -240,21 +240,24 @@ async function navigateToNewProperty(page) {
   const mainFrame = page.frame({ name: "main" });
   if (!mainFrame) throw new Error("Main frame not found");
 
-  // ドラフト復元ダイアログが出ている場合は削除して新規開始
+  // ドラフト復元ダイアログが出ている場合
   const hasDraft = await mainFrame.evaluate(() => {
     const btn = document.getElementById("deleteDraftButton");
     if (btn && btn.offsetParent !== null) return true;
     return false;
   });
   if (hasDraft) {
-    console.log("[forrent] ドラフト検出 → 削除して新規物件登録");
-    await mainFrame.click("#deleteDraftButton");
-    await page.waitForTimeout(2000);
-    // 確認ダイアログが出る場合
-    const yesBtn = await mainFrame.$("#yesDeleteDraftButton");
-    if (yesBtn) {
-      await yesBtn.click();
-      await page.waitForTimeout(3000);
+    if (deleteDraft) {
+      console.log("[forrent] ドラフト検出 → 削除して新規物件登録");
+      await mainFrame.click("#deleteDraftButton");
+      await page.waitForTimeout(2000);
+      const yesBtn = await mainFrame.$("#yesDeleteDraftButton");
+      if (yesBtn) {
+        await yesBtn.click();
+        await page.waitForTimeout(3000);
+      }
+    } else {
+      console.log("[forrent] ドラフト検出 → 保持（deleteDraft=false）");
     }
   }
 
@@ -2272,14 +2275,15 @@ async function fillShuhenKankyo(page, mainFrame) {
     // 郵便局・学校等はポップアップが自動設定しないため手動で設定
     try {
       await mainFrame.evaluate(() => {
+        // codes must match SHUHEN_CATEGORIES / forrent.jp categoryCd select options
         const NAME_TO_CODE = {
           "コンビニ": "060203", "セブン": "060203", "ファミリーマート": "060203", "ローソン": "060203", "ミニストップ": "060203",
-          "スーパー": "060201", "マルエツ": "060201", "まいばすけっと": "060201", "成城石井": "060201", "ライフ": "060201",
-          "ドラッグ": "060210", "薬局": "060210", "スギ薬局": "060210", "マツモトキヨシ": "060210",
-          "病院": "060207", "クリニック": "060207", "医院": "060207",
+          "スーパー": "060202", "マルエツ": "060202", "まいばすけっと": "060202", "成城石井": "060202", "ライフ": "060202",
+          "ドラッグ": "060204", "薬局": "060204", "スギ薬局": "060204", "マツモトキヨシ": "060204",
+          "病院": "060210", "クリニック": "060210", "医院": "060210",
           "学校": "060207", "小学校": "060207", "中学校": "060207",
-          "郵便局": "060201",
-          "飲食": "060204", "レストラン": "060204",
+          "郵便局": "060211",
+          "飲食": "060218", "レストラン": "060218",
         };
         for (let i = 0; i < 6; i++) {
           const catEl = document.querySelector(`select[name="bukkenInputForm.shuhenKankyoInputForm[${i}].categoryCd"]`);
@@ -2329,6 +2333,102 @@ function norm(str) {
 }
 
 
+/**
+ * 一時保存 — フォーム内容をドラフトとして保存（本登録はしない）
+ * forrent.jpの一時保存ボタンをクリックして、入力内容を下書きとして保持。
+ * 担当者が後から確認→本登録するフロー用。
+ */
+async function saveDraft(page, mainFrame) {
+  console.log("[forrent] === SAVE DRAFT (一時保存) START ===");
+  try {
+    await mainFrame.evaluate(() => window.scrollTo(0, 0));
+    await mainFrame.waitForTimeout(500);
+
+    const dialogs = [];
+    page.on("dialog", async (dialog) => {
+      dialogs.push({ type: dialog.type(), message: dialog.message() });
+      await dialog.accept();
+    });
+
+    // 一時保存ボタンを探してクリック
+    const draftResult = await mainFrame.evaluate(() => {
+      // ID-based search
+      const byId = document.getElementById("tempSaveButton")
+        || document.getElementById("draftButton")
+        || document.getElementById("ichiji_hozon")
+        || document.getElementById("tmpSaveButton");
+      if (byId) { byId.click(); return { found: true, method: "id", label: byId.value || byId.textContent || byId.id }; }
+
+      // Value/text search for 一時保存 buttons
+      const buttons = [...document.querySelectorAll("input[type='button'], input[type='submit'], button, input[type='image']")];
+      for (const btn of buttons) {
+        const text = (btn.value || btn.textContent || btn.alt || "").trim();
+        if (text.includes("一時保存") || text.includes("下書き") || text.includes("保存")) {
+          btn.click();
+          return { found: true, method: "text", label: text };
+        }
+      }
+
+      // Image button search (forrent.jp often uses image buttons)
+      const imgs = [...document.querySelectorAll("img[onclick], a img")];
+      for (const img of imgs) {
+        const alt = img.alt || "";
+        const src = img.src || "";
+        if (alt.includes("一時保存") || alt.includes("保存") || src.includes("temp") || src.includes("draft") || src.includes("ichiji")) {
+          img.click();
+          return { found: true, method: "img", label: alt || src.split("/").pop() };
+        }
+      }
+
+      // regButton1 is often the draft/temp save button (regButton2 = confirm)
+      const reg1 = document.getElementById("regButton1");
+      if (reg1) {
+        const label = reg1.value || reg1.alt || "regButton1";
+        // Only use regButton1 if it looks like a save button (not delete/cancel)
+        if (!label.includes("削除") && !label.includes("キャンセル")) {
+          reg1.click();
+          return { found: true, method: "regButton1", label };
+        }
+      }
+
+      return { found: false, method: null, label: null };
+    });
+
+    if (!draftResult.found) {
+      console.log("[forrent] 一時保存ボタンが見つかりません");
+      return { saved: false, error: "一時保存ボタンが見つかりません" };
+    }
+
+    console.log(`[forrent] 一時保存ボタンクリック: ${draftResult.label} (${draftResult.method})`);
+    await mainFrame.waitForTimeout(5000);
+
+    // Confirm the save was successful
+    const confirmFrame = page.frame({ name: "main" }) || mainFrame;
+    const saveResult = await confirmFrame.evaluate(() => {
+      const body = document.body?.innerText || "";
+      const hasSuccess = body.includes("保存") || body.includes("完了") || body.includes("一時保存");
+      const errorEls = document.querySelectorAll('.errorMessage, .error, [class*="error"]');
+      const errors = [...errorEls].map(el => el.textContent.trim()).filter(Boolean);
+      return { bodySnippet: body.slice(0, 1000), hasSuccess, errors };
+    });
+
+    if (dialogs.length > 0) {
+      console.log(`[forrent] ダイアログ: ${dialogs.map(d => d.message).join(", ")}`);
+    }
+
+    if (saveResult.errors.length > 0) {
+      console.log(`[forrent] 一時保存エラー: ${saveResult.errors.join(", ")}`);
+      return { saved: false, error: saveResult.errors.join("; "), dialogs };
+    }
+
+    console.log("[forrent] === SAVE DRAFT END === OK");
+    return { saved: true, label: draftResult.label, method: draftResult.method, dialogs };
+  } catch (e) {
+    console.log(`[forrent] 一時保存エラー: ${e.message}`);
+    return { saved: false, error: e.message };
+  }
+}
+
 module.exports = {
   login,
   navigateToNewProperty,
@@ -2340,4 +2440,5 @@ module.exports = {
   uploadImages,
   fillTokucho,
   fillShuhenKankyo,
+  saveDraft,
 };

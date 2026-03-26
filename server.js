@@ -239,65 +239,64 @@ async function runNyuko(socket, reinsId) {
     ];
     emit(5, "done", `入力${Object.keys(filled).length}件, 画像${uploaded.length}枚, 交通${transportResult.filled.length}件, 周辺${shuhenResult.filled.length}件`);
 
-    // ── Step 6: 確認画面でスコア＆バリデーションチェック ──
-    emit(6, "running", "確認画面に遷移中...");
-    let score = null;
+    // ── Step 6: 一時保存（ドラフト保存 → 担当者が確認後に本登録） ──
+    emit(6, "running", "一時保存中...");
+    let draftResult = { saved: false };
     let validationErrors = [];
     try {
-      await mainFrame.evaluate(() => window.scrollTo(0, 0));
-      await mainFrame.waitForTimeout(500);
+      draftResult = await forrent.saveDraft(forrentPage, mainFrame);
 
-      const dialogs = [];
-      forrentPage.on("dialog", async (dialog) => {
-        dialogs.push({ type: dialog.type(), message: dialog.message() });
-        await dialog.accept();
-      });
-
-      await mainFrame.evaluate(() => {
-        const btn = document.getElementById("regButton2");
-        if (btn) btn.click();
-      });
-
-      await mainFrame.waitForTimeout(10000);
-
-      const confirmFrame = forrentPage.frame({ name: "main" }) || mainFrame;
-      const pageInfo = await confirmFrame.evaluate(() => {
-        const body = document.body?.innerText || "";
-        const errorEls = document.querySelectorAll('.errorMessage, .error, [class*="error"], [class*="Error"]');
-        const errors = [...errorEls].map(el => el.textContent.trim()).filter(Boolean);
-        const redTexts = [...document.querySelectorAll('span[style*="color"], font[color="red"], .red')];
-        const redErrors = redTexts.map(el => el.textContent.trim()).filter(t => t.length > 2 && t.length < 200);
-        const scorePatterns = [
-          /名寄せスコア[：:\s]*(\d+)/, /スコア[：:\s]*(\d+)/,
-          /合計[：:\s]*(\d+)\s*点/, /(\d+)\s*点\s*\/\s*\d+\s*点/,
-        ];
-        let score = null;
-        for (const re of scorePatterns) {
-          const m = body.match(re);
-          if (m) { score = parseInt(m[1]); break; }
-        }
-        return { errors, redErrors, score, bodySnippet: body.slice(0, 2000) };
-      });
-
-      score = pageInfo.score;
-      validationErrors = [...pageInfo.errors, ...pageInfo.redErrors];
-
-      if (dialogs.length > 0) {
-        validationErrors.push(...dialogs.map(d => `[${d.type}] ${d.message}`));
-      }
-
-      if (score !== null) {
-        emit(6, "done", `名寄せスコア: ${score}点 / 43点`);
-      } else if (validationErrors.length > 0) {
-        emit(6, "done", `バリデーションエラー ${validationErrors.length}件`);
+      if (draftResult.saved) {
+        emit(6, "done", `一時保存完了（${draftResult.label || "draft"}）`);
       } else {
-        emit(6, "done", "確認画面表示済み");
+        // 一時保存ボタンが見つからない場合は確認画面に遷移してスコアチェック
+        emit(6, "running", "一時保存ボタン未検出 → 確認画面に遷移中...");
+        mainFrame = forrentPage.frame({ name: "main" }) || mainFrame;
+        await mainFrame.evaluate(() => window.scrollTo(0, 0));
+        await mainFrame.waitForTimeout(500);
+
+        forrentPage.on("dialog", async (dialog) => {
+          validationErrors.push(`[${dialog.type()}] ${dialog.message()}`);
+          await dialog.accept();
+        });
+
+        await mainFrame.evaluate(() => {
+          const btn = document.getElementById("regButton2");
+          if (btn) btn.click();
+        });
+        await mainFrame.waitForTimeout(10000);
+
+        const confirmFrame = forrentPage.frame({ name: "main" }) || mainFrame;
+        const pageInfo = await confirmFrame.evaluate(() => {
+          const body = document.body?.innerText || "";
+          const errorEls = document.querySelectorAll('.errorMessage, .error, [class*="error"], [class*="Error"]');
+          const errors = [...errorEls].map(el => el.textContent.trim()).filter(Boolean);
+          const redTexts = [...document.querySelectorAll('span[style*="color"], font[color="red"], .red')];
+          const redErrors = redTexts.map(el => el.textContent.trim()).filter(t => t.length > 2 && t.length < 200);
+          const scorePatterns = [
+            /名寄せスコア[：:\s]*(\d+)/, /スコア[：:\s]*(\d+)/,
+            /合計[：:\s]*(\d+)\s*点/, /(\d+)\s*点\s*\/\s*\d+\s*点/,
+          ];
+          let score = null;
+          for (const re of scorePatterns) {
+            const m = body.match(re);
+            if (m) { score = parseInt(m[1]); break; }
+          }
+          return { errors, redErrors, score, bodySnippet: body.slice(0, 2000) };
+        });
+
+        validationErrors.push(...pageInfo.errors, ...pageInfo.redErrors);
+        if (pageInfo.score !== null) {
+          emit(6, "done", `確認画面（名寄せスコア: ${pageInfo.score}点 / 43点）`);
+        } else {
+          emit(6, "done", draftResult.error || "確認画面表示済み");
+        }
       }
     } catch (e) {
-      emit(6, "done", `確認画面エラー: ${e.message.slice(0, 100)}`);
+      emit(6, "done", `保存エラー: ${e.message.slice(0, 100)}`);
     }
 
-    // ゴール: 情報入力完了。フォームは送信せず、ブラウザを開いたまま確認待ち。
+    // ゴール: 一時保存完了。担当者がforrent.jpで確認→本登録するフロー。
     done({
       catchCopy: texts.catchCopy,
       comment: texts.freeComment,
@@ -307,7 +306,7 @@ async function runNyuko(socket, reinsId) {
       transport: transportResult.filled,
       tokucho: tokuchoResult,
       shuhen: shuhenResult.filled,
-      score,
+      draftSaved: draftResult.saved,
       validationErrors,
       errors: allErrors,
       savedTo: downloadDir,

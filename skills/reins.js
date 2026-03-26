@@ -4,7 +4,7 @@
  * Selectors & structure based on investigation (2026-02-12):
  * - Bootstrap-Vue SPA (Nuxt.js)
  * - Dynamic IDs (__BVID__*) → use class-based selectors
- * - Image popup: modal-xl centered, fixed rect (226,70,828,760) at 1280x900
+ * - Image popup: modal-xl centered, dynamic boundingBox with fixed fallback
  */
 
 const REINS_URLS = {
@@ -44,8 +44,8 @@ const REINS_SELECTORS = {
     modal: ".modal.show .modal-content",
     imageView: ".flex-fill.image-view",
     closeBtn: 'button:has-text("閉じる")',
-    // Fixed coordinates at viewport 1280x900
-    clip: { x: 227, y: 131, width: 826, height: 654 },
+    // Tighter fallback clip (10px inset from original)
+    clip: { x: 237, y: 141, width: 806, height: 634 },
   },
 };
 
@@ -306,12 +306,23 @@ async function screenshotAllImages(page, imagesMeta, downloadDir) {
       await link.click();
       await page.waitForTimeout(2000);
 
-      // Screenshot the white rectangular frame area
+      // Dynamic clip from modal <img> boundingBox (avoids green background bleeding)
       const filePath = path.join(downloadDir, `reins_${i + 1}.jpg`);
+      let clip = REINS_SELECTORS.imagePopup.clip;
+      try {
+        const modalImg = await page.$('.modal.show .modal-content img');
+        if (modalImg) {
+          const box = await modalImg.boundingBox();
+          if (box && box.width > 50 && box.height > 50) {
+            clip = { x: box.x + 2, y: box.y + 2, width: box.width - 4, height: box.height - 4 };
+            console.log(`[reins] Dynamic clip: ${JSON.stringify(clip)}`);
+          }
+        }
+      } catch {}
       await page.screenshot({
         type: "jpeg",
         quality: 90,
-        clip: REINS_SELECTORS.imagePopup.clip,
+        clip,
         path: filePath,
       });
 
@@ -349,11 +360,22 @@ async function screenshotImagePopup(page, imageIndex) {
   if (link) await link.click();
   await page.waitForTimeout(2000);
 
-  // Take clip screenshot of the image area
+  // Dynamic clip from modal <img> boundingBox
+  let clip = REINS_SELECTORS.imagePopup.clip;
+  try {
+    const modalImg = await page.$('.modal.show .modal-content img');
+    if (modalImg) {
+      const box = await modalImg.boundingBox();
+      if (box && box.width > 50 && box.height > 50) {
+        clip = { x: box.x + 2, y: box.y + 2, width: box.width - 4, height: box.height - 4 };
+        console.log(`[reins] Dynamic clip: ${JSON.stringify(clip)}`);
+      }
+    }
+  } catch {}
   const buffer = await page.screenshot({
     type: "jpeg",
     quality: 85,
-    clip: REINS_SELECTORS.imagePopup.clip,
+    clip,
   });
 
   // Close modal

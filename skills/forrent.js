@@ -68,6 +68,18 @@ const MADORI_TYPE_CODE = {
   LK: "07", SK: "08", SLK: "09",
 };
 
+// ── 周辺環境カテゴリコード（単一ソース） ──
+const SHUHEN_CATEGORY_CODES = {
+  "060201": "ショッピングセンター",
+  "060202": "スーパー",
+  "060203": "コンビニ",
+  "060204": "ドラッグストア",
+  "060207": "学校",
+  "060210": "病院",
+  "060211": "郵便局",
+  "060218": "飲食店",
+};
+
 // ══════════════════════════════════════════════════════════
 //  LOW-LEVEL HELPERS
 // ══════════════════════════════════════════════════════════
@@ -588,21 +600,53 @@ async function fillPropertyForm(mainFrame, reinsData) {
   ok("BB対応", await selectRadioByIndex(mainFrame, "bbCpyKbnCd", 1));
 
   // ═══ 17. その他費用 ═══
-  // etcHiyoFlg + etcHiyo1(万) + etcHiyo2(千) — 鍵交換代等
+  // etcHiyoFlg + etcHiyo1(万) + etcHiyo2(百) — 初期費用（鍵交換代、消毒、クリーニング等）
   try {
     await setCheckbox(mainFrame, "etcHiyoFlg", true, "その他費用");
-    // REINS全備考フィールドから金額抽出を試みる（例: "鍵交換代18700円"）
-    const allBiko = norm([reinsData.備考1, reinsData.備考2, reinsData.備考3,
-      reinsData.条件フリー, reinsData.その他一時金].filter(Boolean).join(" "));
-    const etcMatch = allBiko.match(/鍵交換[代費]?\D*([\d,.]+)\s*円/);
-    if (etcMatch) {
-      const yen = parseInt(etcMatch[1].replace(/[,\.]/g, ""));
-      const man = Math.floor(yen / 10000);
-      const sen = Math.round((yen % 10000) / 100);
+    // REINS全備考フィールド + その他一時金から初期費用関連の金額を抽出
+    const allBiko = norm([reinsData.その他一時金, reinsData.備考1, reinsData.備考2, reinsData.備考3,
+      reinsData.条件フリー].filter(Boolean).join(" "));
+    // Match all initial cost-related amounts (鍵交換, 消毒, クリーニング, サポート, 事務手数料 etc.)
+    const costPatterns = [
+      /鍵交換[代費]?\D*([\d,.]+)\s*円/g,
+      /(?:室内)?消毒[代費]?\D*([\d,.]+)\s*円/g,
+      /クリーニング[代費]?\D*([\d,.]+)\s*円/g,
+      /(?:室内)?清掃[代費]?\D*([\d,.]+)\s*円/g,
+      /抗菌[代費]?\D*([\d,.]+)\s*円/g,
+      /害虫駆除[代費]?\D*([\d,.]+)\s*円/g,
+      /(?:安心|入居|24時間)サポート[代費]?\D*([\d,.]+)\s*円/g,
+      /事務手数料\D*([\d,.]+)\s*円/g,
+      /書類作成[代費]?\D*([\d,.]+)\s*円/g,
+    ];
+    let totalYen = 0;
+    const foundItems = [];
+    for (const pat of costPatterns) {
+      let m;
+      while ((m = pat.exec(allBiko)) !== null) {
+        const yen = parseInt(m[1].replace(/[,\.]/g, ""), 10);
+        if (yen > 0 && yen < 500000) { // sanity: up to 50万
+          totalYen += yen;
+          foundItems.push(`${m[0].replace(/\D*([\d,.]+)\s*円/, '')}${yen}円`);
+        }
+      }
+    }
+    // Fallback: if no specific items found, try generic "初期費用xxx円" or "その他xxx円"
+    if (totalYen === 0) {
+      const genericMatch = allBiko.match(/(?:初期費用|その他[一費]?[時金]?)\D*([\d,.]+)\s*円/);
+      if (genericMatch) {
+        totalYen = parseInt(genericMatch[1].replace(/[,\.]/g, ""), 10);
+        foundItems.push(`初期費用${totalYen}円`);
+      }
+    }
+    if (totalYen > 0) {
+      const man = Math.floor(totalYen / 10000);
+      const sen = Math.round((totalYen % 10000) / 100);
       await fillByName(mainFrame, `${S}etcHiyo1}`, String(man), "その他費用(万)");
       if (sen > 0) await fillByName(mainFrame, `${S}etcHiyo2}`, String(sen).padStart(2, "0"), "その他費用(百)");
+      console.log(`[forrent] + その他費用: ${totalYen}円 (${foundItems.join(', ')})`);
     } else {
       // デフォルト: 2万円（鍵交換代相場）
+      console.log("[forrent] ? その他費用: REINS初期費用データなし → デフォルト2万円");
       await fillByName(mainFrame, `${S}etcHiyo1}`, "2", "その他費用(万)");
     }
     filled["その他費用"] = true;
@@ -880,12 +924,17 @@ async function fillDeposit(f, raw, cfg, ok) {
     await setCheckbox(f, cfg.flgId, false, `${cfg.label}フラグ`);
     return;
   }
-  // "1ヶ月", "2ヶ月", "1か月", "1カ月" pattern
+  // "1ヶ月", "2ヶ月", "1.5ヶ月", "1か月", "1カ月" pattern
+  // Form has two fields: n1 (integer) + n2 (decimal) — e.g. "1.5" → n1="1", n2="5"
   const monthM = s.match(/(\d+\.?\d*)(?:ヶ|か|カ)?月/);
   if (monthM) {
     await f.click(`#${cfg.monthId}`).catch(() => {});
     await f.waitForTimeout(200);
-    ok(`${cfg.label}`, await fillByName(f, cfg.n1, monthM[1], `${cfg.label}(ヶ月)`));
+    const v = parseFloat(monthM[1]);
+    const intPart = Math.floor(v);
+    const decPart = Math.round((v - intPart) * 10);
+    ok(`${cfg.label}(整数)`, await fillByName(f, cfg.n1, String(intPart), `${cfg.label}(ヶ月・整数)`));
+    if (decPart > 0) ok(`${cfg.label}(小数)`, await fillByName(f, cfg.n2, String(decPart), `${cfg.label}(ヶ月・小数)`));
     return;
   }
   // "10万円", "10.5万円" pattern
@@ -913,12 +962,16 @@ async function fillDeposit(f, raw, cfg, ok) {
       return;
     }
   }
-  // Pure number — treat as months
+  // Pure number — treat as months (split integer/decimal)
   const numM = s.match(/^(\d+\.?\d*)$/);
   if (numM) {
     await f.click(`#${cfg.monthId}`).catch(() => {});
     await f.waitForTimeout(200);
-    ok(`${cfg.label}`, await fillByName(f, cfg.n1, numM[1], `${cfg.label}(ヶ月)`));
+    const v = parseFloat(numM[1]);
+    const intPart = Math.floor(v);
+    const decPart = Math.round((v - intPart) * 10);
+    ok(`${cfg.label}(整数)`, await fillByName(f, cfg.n1, String(intPart), `${cfg.label}(ヶ月・整数)`));
+    if (decPart > 0) ok(`${cfg.label}(小数)`, await fillByName(f, cfg.n2, String(decPart), `${cfg.label}(ヶ月・小数)`));
     return;
   }
   // Unrecognized format (e.g. "保証金") — flag OFF
@@ -1556,19 +1609,16 @@ async function uploadImages(mainFrame, processedImages) {
         { code: "060211", name: "郵便局" },
       ];
       // facilityTypeがある場合は画像の実際の施設種別に合ったカテゴリを使用
-      const SHUHEN_TYPE_MAP = {
-        "コンビニ": { code: "060203", name: "コンビニ" },
-        "スーパー": { code: "060202", name: "スーパー" },
-        "ドラッグストア": { code: "060204", name: "ドラッグストア" },
-        "飲食店": { code: "060218", name: "飲食店" },
-        "郵便局": { code: "060211", name: "郵便局" },
-        "病院": { code: "060210", name: "病院" },
-        "学校": { code: "060207", name: "学校" },
-      };
+      // Derived from SHUHEN_CATEGORY_CODES (single source of truth at module top)
+      const SHUHEN_TYPE_MAP = Object.fromEntries(
+        Object.entries(SHUHEN_CATEGORY_CODES).map(([code, name]) => [name, { code, name }])
+      );
       const catInfo = (img.facilityType && SHUHEN_TYPE_MAP[img.facilityType])
         || SHUHEN_CATEGORIES[currentShuhen - 1]
         || SHUHEN_CATEGORIES[0];
-      const destName = img.facilityName || catInfo.name;
+      const destName = (img.facilityName && img.facilityName !== catInfo.name)
+        ? img.facilityName
+        : `近隣${catInfo.name}`;
       try {
         const metaResult = await mainFrame.evaluate(({ n, catCode, catName }) => {
           const catEl = document.getElementById(`mokuteki${n}`);
@@ -2275,7 +2325,8 @@ async function fillShuhenKankyo(page, mainFrame) {
     // 郵便局・学校等はポップアップが自動設定しないため手動で設定
     try {
       await mainFrame.evaluate(() => {
-        // codes must match SHUHEN_CATEGORIES / forrent.jp categoryCd select options
+        // Browser context: cannot reference SHUHEN_CATEGORY_CODES directly.
+        // Canonical mapping is SHUHEN_CATEGORY_CODES at module top.
         const NAME_TO_CODE = {
           "コンビニ": "060203", "セブン": "060203", "ファミリーマート": "060203", "ローソン": "060203", "ミニストップ": "060203",
           "スーパー": "060202", "マルエツ": "060202", "まいばすけっと": "060202", "成城石井": "060202", "ライフ": "060202",

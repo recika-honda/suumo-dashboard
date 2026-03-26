@@ -14,6 +14,73 @@ const Anthropic = require("@anthropic-ai/sdk");
 
 const aiClient = new Anthropic();
 
+// ── Brand Logo Mapping ──
+// Known chains use pre-stored logos instead of Maps photos (more reliable, consistent).
+// Logo files are placed in assets/facility-logos/ (manually, for copyright reasons).
+const BRAND_LOGOS_DIR = path.join(__dirname, "..", "assets", "facility-logos");
+const BRAND_LOGOS = {
+  // コンビニ
+  "セブンイレブン": "seven-eleven.png", "セブン-イレブン": "seven-eleven.png",
+  "ファミリーマート": "family-mart.png", "ファミマ": "family-mart.png",
+  "ローソン": "lawson.png",
+  "ミニストップ": "mini-stop.png",
+  "デイリーヤマザキ": "daily-yamazaki.png",
+  // スーパー
+  "マルエツ": "maruetsu.png",
+  "まいばすけっと": "my-basket.png",
+  "ライフ": "life.png",
+  "成城石井": "seijo-ishii.png",
+  "いなげや": "inageya.png",
+  "サミット": "summit.png",
+  "オーケー": "ok-store.png", "OKストア": "ok-store.png",
+  "西友": "seiyu.png",
+  "イオン": "aeon.png",
+  "イトーヨーカドー": "ito-yokado.png",
+  // ドラッグストア
+  "マツモトキヨシ": "matsukiyo.png", "マツキヨ": "matsukiyo.png",
+  "スギ薬局": "sugi-pharmacy.png",
+  "ウエルシア": "welcia.png",
+  "ツルハ": "tsuruha.png", "ツルハドラッグ": "tsuruha.png",
+  "サンドラッグ": "sundrug.png",
+  "ココカラファイン": "cocokara-fine.png",
+  // 郵便局
+  "郵便局": "japan-post.png", "日本郵便": "japan-post.png",
+};
+
+/**
+ * Check if a facility name matches a known brand with a logo file.
+ * Uses substring matching to handle variations like "セブンイレブン 渋谷店".
+ * @returns {{ brandName: string, logoPath: string } | null}
+ */
+function findBrandLogo(facilityName) {
+  if (!facilityName) return null;
+  for (const [brand, file] of Object.entries(BRAND_LOGOS)) {
+    if (facilityName.includes(brand)) {
+      const logoPath = path.join(BRAND_LOGOS_DIR, file);
+      if (fs.existsSync(logoPath)) {
+        return { brandName: brand, logoPath };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Resize a brand logo to 1280x960 on white background.
+ * Uses "contain" fit so the logo is centered without cropping.
+ */
+async function resizeBrandLogo(logoPath) {
+  return sharp(logoPath)
+    .resize({
+      width: 1280,
+      height: 960,
+      fit: "contain",
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+}
+
 /**
  * Validate a shuhen image using Claude Vision.
  * Rejects images with people and images where the target facility is unclear.
@@ -460,6 +527,25 @@ async function fetchShuhenPhotos(context, reinsData, downloadDir) {
         const mapsResult = await acquireFromGoogleMaps(
           mapsPage, address, ft.query, ft.type, propertyName
         );
+
+        // Priority: brand logo > Maps photo > Image Search
+        const brandMatch = findBrandLogo(mapsResult.name);
+        if (brandMatch) {
+          try {
+            const logoBuffer = await resizeBrandLogo(brandMatch.logoPath);
+            fs.writeFileSync(outputPath, logoBuffer);
+            console.log(`[shuhen] Brand logo used: ${brandMatch.brandName} for ${mapsResult.name}`);
+            results.push({
+              localPath: outputPath,
+              categoryLabel: "周辺環境",
+              facilityName: mapsResult.name,
+              facilityType: ft.type,
+            });
+            continue;
+          } catch (e) {
+            console.log(`[shuhen] Brand logo failed: ${e.message.slice(0, 60)}`);
+          }
+        }
 
         if (mapsResult.photoBuffer) {
           fs.writeFileSync(outputPath, mapsResult.photoBuffer);

@@ -428,7 +428,6 @@ async function googleImageSearch(context, query, outputPath, facilityType = null
     const candidates = fullUrl ? [fullUrl, ...imageUrls] : imageUrls;
     const uniqueCandidates = [...new Set(candidates)];
 
-    let fallbackBuffer = null;
     for (const url of uniqueCandidates) {
       try {
         const resp = await page.context().request.get(url, { timeout: 10000 });
@@ -442,12 +441,7 @@ async function googleImageSearch(context, query, outputPath, facilityType = null
           .jpeg({ quality: 85 })
           .toBuffer();
 
-        // Save first success as fallback
-        if (!fallbackBuffer) {
-          fallbackBuffer = resized;
-        }
-
-        // Validate with AI
+        // AI検証に通った画像のみ保存（未検証のfallbackは使わない）
         if (facilityType) {
           const validation = await validateShuhenImage(resized, facilityType);
           if (!validation.valid) {
@@ -462,13 +456,6 @@ async function googleImageSearch(context, query, outputPath, facilityType = null
       } catch {
         continue;
       }
-    }
-
-    // Use fallback (first downloadable image, even if not AI-validated)
-    if (fallbackBuffer) {
-      fs.writeFileSync(outputPath, fallbackBuffer);
-      console.log(`[shuhen] Image Search saved (fallback): ${path.basename(outputPath)}`);
-      return outputPath;
     }
 
     return null;
@@ -535,6 +522,12 @@ async function fetchShuhenPhotos(context, reinsData, downloadDir) {
         mapsPage, address, ft.query, displayType, propertyName
       );
 
+      // 実店舗名が取得できなかった場合はスキップ（偽名+偽画像を入れない）
+      if (mapsResult.name.includes("付近の")) {
+        console.log(`[shuhen] SKIP: ${displayType} — 店舗名が特定できませんでした`);
+        return false;
+      }
+
       // Priority: brand logo > Maps photo > Image Search
       const brandMatch = findBrandLogo(mapsResult.name);
       if (brandMatch) {
@@ -565,7 +558,7 @@ async function fetchShuhenPhotos(context, reinsData, downloadDir) {
         return true;
       }
 
-      // Fallback to Google Image Search
+      // Fallback to Google Image Search (実店舗名がある場合のみ)
       console.log(`[shuhen] No Maps photo for ${displayType}, trying Image Search...`);
       const queries = [
         `${mapsResult.name} 外観`,

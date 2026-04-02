@@ -340,9 +340,12 @@ async function fillPropertyForm(mainFrame, reinsData, initialCostData = null) {
 
   // 構造 — select name="${bukkenInputForm.kozoShuCd}"
   //   鉄筋コン(01)..その他(99)
+  //   REINS値に「造」が付くケースあり（鉄筋コンクリート造, RC造 等）→ 除去してマッチ
   if (reinsData.建物構造) {
-    const code = STRUCTURE_CODE[norm(reinsData.建物構造)];
+    const structNorm = norm(reinsData.建物構造).replace(/造$/, "");
+    const code = STRUCTURE_CODE[structNorm];
     if (code) ok("構造", await selectByName(mainFrame, `${S}kozoShuCd}`, code, "構造"));
+    else console.log(`[forrent] x 構造: "${structNorm}" → STRUCTURE_CODEにマッチなし`);
   }
 
   // 築年 — id="Wareki2Seireki1", max=4 (西暦)

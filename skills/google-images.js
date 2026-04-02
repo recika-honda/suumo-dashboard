@@ -23,26 +23,27 @@ const BRAND_LOGOS = {
   "セブンイレブン": "seven-eleven.png", "セブン-イレブン": "seven-eleven.png",
   "ファミリーマート": "family-mart.png", "ファミマ": "family-mart.png",
   "ローソン": "lawson.png",
-  "ミニストップ": "mini-stop.png",
+  "ミニストップ": "ministop.png",
   "デイリーヤマザキ": "daily-yamazaki.png",
   // スーパー
   "マルエツ": "maruetsu.png",
-  "まいばすけっと": "my-basket.png",
+  "まいばすけっと": "mybascket.png",
   "ライフ": "life.png",
   "成城石井": "seijo-ishii.png",
   "いなげや": "inageya.png",
-  "サミット": "summit.png",
+  "サミット": "sammit.png",
   "オーケー": "ok-store.png", "OKストア": "ok-store.png",
   "西友": "seiyu.png",
   "イオン": "aeon.png",
   "イトーヨーカドー": "ito-yokado.png",
+  "業務スーパー": "gyoumu-super.png",
   // ドラッグストア
   "マツモトキヨシ": "matsukiyo.png", "マツキヨ": "matsukiyo.png",
-  "スギ薬局": "sugi-pharmacy.png",
+  "スギ薬局": "sugi-pharmercy.png",
   "ウエルシア": "welcia.png",
   "ツルハ": "tsuruha.png", "ツルハドラッグ": "tsuruha.png",
   "サンドラッグ": "sundrug.png",
-  "ココカラファイン": "cocokara-fine.png",
+  "ココカラファイン": "cococala-fine.png",
   // 郵便局
   "郵便局": "japan-post.png", "日本郵便": "japan-post.png",
 };
@@ -108,7 +109,8 @@ async function validateShuhenImage(imageBuffer, facilityType) {
 判定基準:
 1. 人物が大きく写っている場合はNG
 2. 「${facilityType}」の建物・店舗の外観がはっきりと確認できない場合はNG
-3. ロゴ・看板・建物外観で施設が特定できる場合はOK
+3. マンション・アパート等の住居建物（賃貸物件）が写っている場合はNG — 商業施設・公共施設の写真のみ許可
+4. ロゴ・看板で「${facilityType}」の施設だと特定できる場合はOK
 
 JSON形式で回答:
 {"valid":true,"reason":"OK"} または {"valid":false,"reason":"理由"}`,
@@ -501,87 +503,105 @@ async function fetchShuhenPhotos(context, reinsData, downloadDir) {
     return [];
   }
 
-  // Diversified facility types (no duplicates)
-  const facilityTypes = [
+  // Phase 1: Mandatory 4 types (must attempt all)
+  const mandatoryTypes = [
     { type: "コンビニ", query: "コンビニ" },
     { type: "スーパー", query: "スーパーマーケット" },
     { type: "ドラッグストア", query: "ドラッグストア" },
-    { type: "病院", query: "病院 クリニック" },
-    { type: "飲食店", query: "レストラン カフェ" },
     { type: "郵便局", query: "郵便局" },
+  ];
+
+  // Phase 2: Fill remaining slots to reach 6
+  const flexibleTypes = [
+    { type: "コンビニ2", query: "コンビニエンスストア", displayType: "コンビニ" },
+    { type: "スーパー2", query: "スーパー 食品", displayType: "スーパー" },
+    { type: "ドラッグストア2", query: "薬局 ドラッグ", displayType: "ドラッグストア" },
+    { type: "病院", query: "病院 クリニック" },
+    { type: "学校", query: "小学校 中学校" },
   ];
 
   const results = [];
   const mapsPage = await context.newPage();
+  const propertyName = reinsData.建物名 || "";
 
-  try {
-    for (const ft of facilityTypes) {
-      if (results.length >= 6) break;
+  // Shared per-facility acquisition logic
+  async function acquireFacilityPhoto(ft) {
+    const displayType = ft.displayType || ft.type;
+    const slotNum = results.length + 1;
+    const outputPath = path.join(outDir, `shuhen_${slotNum}_${displayType}.jpg`);
 
-      const slotNum = results.length + 1;
-      const outputPath = path.join(outDir, `shuhen_${slotNum}_${ft.type}.jpg`);
+    try {
+      const mapsResult = await acquireFromGoogleMaps(
+        mapsPage, address, ft.query, displayType, propertyName
+      );
 
-      try {
-        // Step 1: Try Google Maps photos (pass property name to exclude self-matches)
-        const propertyName = reinsData.建物名 || "";
-        const mapsResult = await acquireFromGoogleMaps(
-          mapsPage, address, ft.query, ft.type, propertyName
-        );
-
-        // Priority: brand logo > Maps photo > Image Search
-        const brandMatch = findBrandLogo(mapsResult.name);
-        if (brandMatch) {
-          try {
-            const logoBuffer = await resizeBrandLogo(brandMatch.logoPath);
-            fs.writeFileSync(outputPath, logoBuffer);
-            console.log(`[shuhen] Brand logo used: ${brandMatch.brandName} for ${mapsResult.name}`);
-            results.push({
-              localPath: outputPath,
-              categoryLabel: "周辺環境",
-              facilityName: mapsResult.name,
-              facilityType: ft.type,
-            });
-            continue;
-          } catch (e) {
-            console.log(`[shuhen] Brand logo failed: ${e.message.slice(0, 60)}`);
-          }
-        }
-
-        if (mapsResult.photoBuffer) {
-          fs.writeFileSync(outputPath, mapsResult.photoBuffer);
+      // Priority: brand logo > Maps photo > Image Search
+      const brandMatch = findBrandLogo(mapsResult.name);
+      if (brandMatch) {
+        try {
+          const logoBuffer = await resizeBrandLogo(brandMatch.logoPath);
+          fs.writeFileSync(outputPath, logoBuffer);
+          console.log(`[shuhen] Brand logo used: ${brandMatch.brandName} for ${mapsResult.name}`);
           results.push({
             localPath: outputPath,
             categoryLabel: "周辺環境",
             facilityName: mapsResult.name,
-            facilityType: ft.type,
+            facilityType: displayType,
           });
-          continue;
+          return true;
+        } catch (e) {
+          console.log(`[shuhen] Brand logo failed: ${e.message.slice(0, 60)}`);
         }
+      }
 
-        // Step 2: Fallback to Google Image Search (multiple query strategies)
-        console.log(`[shuhen] No Maps photo for ${ft.type}, trying Image Search...`);
-        const queries = [
-          `${mapsResult.name} 外観`,
-          `${ft.type} 店舗 外観`,
-        ];
-        let saved = null;
-        for (const imgQuery of queries) {
-          saved = await googleImageSearch(context, imgQuery, outputPath, ft.type);
-          if (saved) break;
-        }
+      if (mapsResult.photoBuffer) {
+        fs.writeFileSync(outputPath, mapsResult.photoBuffer);
+        results.push({
+          localPath: outputPath,
+          categoryLabel: "周辺環境",
+          facilityName: mapsResult.name,
+          facilityType: displayType,
+        });
+        return true;
+      }
+
+      // Fallback to Google Image Search
+      console.log(`[shuhen] No Maps photo for ${displayType}, trying Image Search...`);
+      const queries = [
+        `${mapsResult.name} 外観`,
+        `${displayType} 店舗 外観`,
+      ];
+      for (const imgQuery of queries) {
+        const saved = await googleImageSearch(context, imgQuery, outputPath, displayType);
         if (saved) {
           results.push({
             localPath: outputPath,
             categoryLabel: "周辺環境",
             facilityName: mapsResult.name,
-            facilityType: ft.type,
+            facilityType: displayType,
           });
-        } else {
-          console.log(`[shuhen] SKIP: ${ft.type} — no photo available`);
+          return true;
         }
-      } catch (e) {
-        console.log(`[shuhen] Error for ${ft.type}: ${e.message.slice(0, 80)}`);
       }
+
+      console.log(`[shuhen] SKIP: ${displayType} — no photo available`);
+      return false;
+    } catch (e) {
+      console.log(`[shuhen] Error for ${displayType}: ${e.message.slice(0, 80)}`);
+      return false;
+    }
+  }
+
+  try {
+    // Phase 1: attempt all mandatory types
+    for (const ft of mandatoryTypes) {
+      await acquireFacilityPhoto(ft);
+    }
+
+    // Phase 2: fill remaining slots to reach 6
+    for (const ft of flexibleTypes) {
+      if (results.length >= 6) break;
+      await acquireFacilityPhoto(ft);
     }
   } finally {
     await mapsPage.close().catch(() => {});

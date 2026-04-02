@@ -280,7 +280,7 @@ async function navigateToNewProperty(page, { deleteDraft = true } = {}) {
 //  MAIN FORM FILL — 決定論的フィールドマッピング
 // ══════════════════════════════════════════════════════════
 
-async function fillPropertyForm(mainFrame, reinsData) {
+async function fillPropertyForm(mainFrame, reinsData, initialCostData = null) {
   const filled = {};
   const errors = [];
   const ok = (name, result) => {
@@ -592,7 +592,8 @@ async function fillPropertyForm(mainFrame, reinsData) {
   }
 
   // ═══ 15. 保証人代行 ═══
-  // hoshoninDaikoKbnCd: index 1 = 利用可（41pt実績値）
+  // hoshoninDaikoKbnCd: index 1 (value="2") = 必加入（先方指定ルール）
+  // Options: index 0 = 任意加入, index 1 = 必加入
   ok("保証人代行", await selectRadioByIndex(mainFrame, "hoshoninDaikoKbnCd", 1));
 
   // ═══ 16. BB(ブロードバンド)対応 ═══
@@ -601,52 +602,69 @@ async function fillPropertyForm(mainFrame, reinsData) {
 
   // ═══ 17. その他費用 ═══
   // etcHiyoFlg + etcHiyo1(万) + etcHiyo2(百) — 初期費用（鍵交換代、消毒、クリーニング等）
+  // Priority: 物確 structured data > REINS biko regex > default 2万
   try {
     await setCheckbox(mainFrame, "etcHiyoFlg", true, "その他費用");
-    // REINS全備考フィールド + その他一時金から初期費用関連の金額を抽出
-    const allBiko = norm([reinsData.その他一時金, reinsData.備考1, reinsData.備考2, reinsData.備考3,
-      reinsData.条件フリー].filter(Boolean).join(" "));
-    // Match all initial cost-related amounts (鍵交換, 消毒, クリーニング, サポート, 事務手数料 etc.)
-    const costPatterns = [
-      /鍵交換[代費]?\D*([\d,.]+)\s*円/g,
-      /(?:室内)?消毒[代費]?\D*([\d,.]+)\s*円/g,
-      /クリーニング[代費]?\D*([\d,.]+)\s*円/g,
-      /(?:室内)?清掃[代費]?\D*([\d,.]+)\s*円/g,
-      /抗菌[代費]?\D*([\d,.]+)\s*円/g,
-      /害虫駆除[代費]?\D*([\d,.]+)\s*円/g,
-      /(?:安心|入居|24時間)サポート[代費]?\D*([\d,.]+)\s*円/g,
-      /事務手数料\D*([\d,.]+)\s*円/g,
-      /書類作成[代費]?\D*([\d,.]+)\s*円/g,
-    ];
     let totalYen = 0;
     const foundItems = [];
-    for (const pat of costPatterns) {
-      let m;
-      while ((m = pat.exec(allBiko)) !== null) {
-        const yen = parseInt(m[1].replace(/[,\.]/g, ""), 10);
-        if (yen > 0 && yen < 500000) { // sanity: up to 50万
-          totalYen += yen;
-          foundItems.push(`${m[0].replace(/\D*([\d,.]+)\s*円/, '')}${yen}円`);
+    let source = "";
+
+    // (A) 物確 structured data — sum of 鍵交換代 + 消毒代 + クリーニング代 + サポート代 + 事務手数料
+    if (initialCostData) {
+      const costKeys = ["鍵交換代", "消毒代", "クリーニング代", "サポート代", "事務手数料"];
+      for (const key of costKeys) {
+        if (initialCostData[key] && initialCostData[key] > 0) {
+          totalYen += initialCostData[key];
+          foundItems.push(`${key}${initialCostData[key]}円`);
         }
       }
+      if (totalYen > 0) source = "bukaku";
     }
-    // Fallback: if no specific items found, try generic "初期費用xxx円" or "その他xxx円"
+
+    // (B) REINS biko regex fallback
     if (totalYen === 0) {
-      const genericMatch = allBiko.match(/(?:初期費用|その他[一費]?[時金]?)\D*([\d,.]+)\s*円/);
-      if (genericMatch) {
-        totalYen = parseInt(genericMatch[1].replace(/[,\.]/g, ""), 10);
-        foundItems.push(`初期費用${totalYen}円`);
+      const allBiko = norm([reinsData.その他一時金, reinsData.備考1, reinsData.備考2, reinsData.備考3,
+        reinsData.条件フリー].filter(Boolean).join(" "));
+      const costPatterns = [
+        /鍵交換[代費]?\D*([\d,.]+)\s*円/g,
+        /(?:室内)?消毒[代費]?\D*([\d,.]+)\s*円/g,
+        /クリーニング[代費]?\D*([\d,.]+)\s*円/g,
+        /(?:室内)?清掃[代費]?\D*([\d,.]+)\s*円/g,
+        /抗菌[代費]?\D*([\d,.]+)\s*円/g,
+        /害虫駆除[代費]?\D*([\d,.]+)\s*円/g,
+        /(?:安心|入居|24時間)サポート[代費]?\D*([\d,.]+)\s*円/g,
+        /事務手数料\D*([\d,.]+)\s*円/g,
+        /書類作成[代費]?\D*([\d,.]+)\s*円/g,
+      ];
+      for (const pat of costPatterns) {
+        let m;
+        while ((m = pat.exec(allBiko)) !== null) {
+          const yen = parseInt(m[1].replace(/[,\.]/g, ""), 10);
+          if (yen > 0 && yen < 500000) {
+            totalYen += yen;
+            foundItems.push(`${m[0].replace(/\D*([\d,.]+)\s*円/, '')}${yen}円`);
+          }
+        }
       }
+      if (totalYen === 0) {
+        const genericMatch = allBiko.match(/(?:初期費用|その他[一費]?[時金]?)\D*([\d,.]+)\s*円/);
+        if (genericMatch) {
+          totalYen = parseInt(genericMatch[1].replace(/[,\.]/g, ""), 10);
+          foundItems.push(`初期費用${totalYen}円`);
+        }
+      }
+      if (totalYen > 0) source = "REINS";
     }
+
     if (totalYen > 0) {
       const man = Math.floor(totalYen / 10000);
       const sen = Math.round((totalYen % 10000) / 100);
       await fillByName(mainFrame, `${S}etcHiyo1}`, String(man), "その他費用(万)");
       if (sen > 0) await fillByName(mainFrame, `${S}etcHiyo2}`, String(sen).padStart(2, "0"), "その他費用(百)");
-      console.log(`[forrent] + その他費用: ${totalYen}円 (${foundItems.join(', ')})`);
+      console.log(`[forrent] + その他費用: ${totalYen}円 [${source}] (${foundItems.join(', ')})`);
     } else {
-      // デフォルト: 2万円（鍵交換代相場）
-      console.log("[forrent] ? その他費用: REINS初期費用データなし → デフォルト2万円");
+      // (C) Default: 2万円
+      console.log("[forrent] ? その他費用: 物確/REINS初期費用データなし → デフォルト2万円");
       await fillByName(mainFrame, `${S}etcHiyo1}`, "2", "その他費用(万)");
     }
     filled["その他費用"] = true;
@@ -656,53 +674,36 @@ async function fillPropertyForm(mainFrame, reinsData) {
 
   // ═══ 18. 損保（火災保険） ═══
   // sonpoFlg checkbox → wait for dependent fields → fill amount/years
+  // 物確: use initialCostData.火災保険 actual amount if available
   try {
     await setCheckbox(mainFrame, "sonpoFlg", true, "損保");
-    await mainFrame.waitForTimeout(500); // wait for dependent fields to appear
-    // Try both name-based and ID-based access for amount/years
-    const sonpoOk = await mainFrame.evaluate(({ S }) => {
+    await mainFrame.waitForTimeout(500);
+    // Determine fire insurance amount: 物確 actual > default 2万
+    const kasaiMan = initialCostData?.["火災保険"]
+      ? String(Math.max(1, Math.round(initialCostData["火災保険"] / 10000)))
+      : "2";
+    const sonpoOk = await mainFrame.evaluate(({ S, kasaiMan }) => {
       const out = [];
-      // sonpoKingaku1 — amount in 万
       const k1 = document.querySelector(`[name="${S}sonpoKingaku1}"]`) || document.getElementById("sonpoKingaku1");
-      if (k1) { k1.value = "2"; k1.dispatchEvent(new Event("change", { bubbles: true })); out.push("金額"); }
-      // sonpoKeiyakuCnt — contract years
+      if (k1) { k1.value = kasaiMan; k1.dispatchEvent(new Event("change", { bubbles: true })); out.push("金額"); }
       const cnt = document.querySelector(`[name="${S}sonpoKeiyakuCnt}"]`) || document.getElementById("sonpoKeiyakuCnt");
       if (cnt) { cnt.value = "2"; cnt.dispatchEvent(new Event("change", { bubbles: true })); out.push("年数"); }
       return out;
-    }, { S });
-    console.log(`[forrent] + 損保: ${sonpoOk.join(", ")} 設定完了`);
+    }, { S, kasaiMan });
+    const kasaiSource = initialCostData?.["火災保険"] ? `物確 ${initialCostData["火災保険"]}円` : "デフォルト2万";
+    console.log(`[forrent] + 損保: ${sonpoOk.join(", ")} 設定完了 [${kasaiSource}]`);
     filled["損保"] = true;
   } catch (e) {
     console.log(`[forrent] x 損保: ${e.message.slice(0, 60)}`);
   }
 
   // ═══ 19. 保証人代行会社区分 ═══
-  // hoshoninDaikoKaishaKbnCd: select → "2" (その他) + 保証会社名・保証料詳細を入力
+  // hoshoninDaikoKaishaKbnCd: "2" (その他) + 固定テキスト（先方指定ルール）
   try {
     await selectByName(mainFrame, `${S}hoshoninDaikoKaishaKbnCd}`, "2", "保証人代行会社");
     await mainFrame.waitForTimeout(300);
-    // Extract guarantor company name + details from ALL REINS biko/free fields
-    const combinedText = norm([reinsData.備考1, reinsData.備考2, reinsData.備考3,
-      reinsData.条件フリー, reinsData.設備フリー, reinsData.その他一時金].filter(Boolean).join(" "));
-    // Try to extract specific company name
-    let hoshoCompanyName = "";
-    const companyMatch = combinedText.match(/(全保連|日本セーフティー?|日本セーフティ|Casa|CASA|カーサ|ジェイリース|オリコ|エポス|クレジット|ジャックス|アプラス|日本賃貸保証|フォーシーズ|エルズサポート|日商トレーディング|ナップ賃貸保証|大和リビング保証|レジデンシャルパートナーズ)/i);
-    if (companyMatch) {
-      hoshoCompanyName = companyMatch[1];
-    }
-    // Extract guarantee fee details (保証料率, 初回保証料, 更新料 etc.)
-    const hoshoDetails = [];
-    const feeMatch = combinedText.match(/(?:初回)?保証(?:委託)?料?\s*[:：]?\s*(?:(?:賃料等?)?(?:合計)?の?)?\s*(\d+[%％]?(?:[～~〜]\d+[%％]?)?)/);
-    if (feeMatch) hoshoDetails.push(`初回保証料:${feeMatch[1]}`);
-    const renewMatch = combinedText.match(/(?:年間|毎年|更新)\s*(?:保証料|更新料)\s*[:：]?\s*([\d,.]+\s*円)/);
-    if (renewMatch) hoshoDetails.push(`更新料:${renewMatch[1]}`);
-    // Build unified format: 保証会社利用必須。{会社名}。{保証料}。詳細お問い合わせください
-    const parts = ["保証会社利用必須"];
-    if (hoshoCompanyName) parts.push(hoshoCompanyName);
-    if (hoshoDetails.length > 0) parts.push(hoshoDetails.join(" "));
-    parts.push("詳細お問い合わせください");
-    const hoshoCompany = parts.join("。");
-    await fillByName(mainFrame, `${S}hoshoninDaikoShosai}`, hoshoCompany, "保証会社名");
+    await fillByName(mainFrame, `${S}hoshoninDaikoShosai}`, "詳細お問い合わせください", "保証会社名");
+    console.log("[forrent] + 保証人代行: その他 / 詳細お問い合わせください");
     filled["保証人代行会社"] = true;
   } catch (e) {
     console.log(`[forrent] x 保証人代行会社: ${e.message.slice(0, 60)}`);
@@ -760,7 +761,7 @@ async function fillPropertyForm(mainFrame, reinsData) {
   // ═══ 22. 貴社物件コード（修正点11） ═══
   {
     const reinsId = reinsData.物件番号 || "";
-    const kishaCode = `AI${reinsId}`;
+    const kishaCode = `fng${reinsId}`;
     await fillByName(mainFrame, `${S}kishaBukkenCd1}`, kishaCode, "貴社物件コード");
     filled["貴社物件コード"] = true;
   }
@@ -784,11 +785,11 @@ async function fillPropertyForm(mainFrame, reinsData) {
   await setCheckbox(mainFrame, "bukkenNmTokkiFlg", true, "物件名特記");
   filled["物件名特記"] = true;
 
-  // ═══ 24. ネット掲載（修正点2） ═══
-  // shijiIsize: 1=掲載, 3=保留（デフォルト）
+  // ═══ 24. ネット掲載 ═══
+  // shijiIsize: 1=掲載, 3=保留
   try {
-    await mainFrame.selectOption("#shijiIsize", "1");
-    console.log("[forrent] + ネット掲載: 掲載(1)");
+    await mainFrame.selectOption("#shijiIsize", "3");
+    console.log("[forrent] + ネット掲載: 保留(3)");
     filled["ネット掲載"] = true;
   } catch (e) {
     console.log(`[forrent] x ネット掲載: ${e.message.slice(0, 60)}`);
@@ -1317,7 +1318,7 @@ async function fillTransportRakuraku(mainFrame, transportArray) {
 //  テキスト入力
 // ══════════════════════════════════════════════════════════
 
-async function fillTexts(mainFrame, catchCopy, freeComment, reinsData) {
+async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCostData = null) {
   const errors = [];
 
   // テキストを制限内にtruncate（フリーコメント=100文字、キャッチ=30文字）
@@ -1325,11 +1326,24 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData) {
   const truncComment = (freeComment || "").slice(0, 100);
 
   // REINS備考情報から特記事項テキストを構築（全備考+フリースペース+一時金を結合して漏れ防止）
-  const biko = reinsData
+  // forrent.jpの備考欄は半角カナ・半角英数字・記号が禁止 → 全角変換
+  const bikoRaw = reinsData
     ? [reinsData.備考1, reinsData.備考2, reinsData.備考3,
        reinsData.条件フリー, reinsData.設備フリー, reinsData.その他一時金].filter(Boolean).join(" ")
     : "";
-  const truncBiko = biko.slice(0, 200);
+  const biko = toFullWidth(bikoRaw).slice(0, 200);
+
+  // Build cost item descriptions for etcHiyoShosai
+  const costItems = [];
+  if (initialCostData) {
+    const costMap = { "鍵交換代": "鍵交換代", "消毒代": "消毒代", "クリーニング代": "クリーニング代",
+      "サポート代": "サポート代", "事務手数料": "事務手数料" };
+    for (const [key, label] of Object.entries(costMap)) {
+      if (initialCostData[key] && initialCostData[key] > 0) {
+        costItems.push(`${label}${initialCostData[key].toLocaleString()}円`);
+      }
+    }
+  }
 
   // Fixed text for net-facing fields (staff request)
   const NET_CATCH = "お電話番号記載のお客様限定【仲介手数料割引キャンペーン中】";
@@ -1337,7 +1351,7 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData) {
 
   // evaluate() で直接 DOM 操作（フレーム状態に左右されにくい）
   try {
-    const result = await mainFrame.evaluate(({ catchCopy, freeComment, biko, netCatch, netFreeMemo }) => {
+    const result = await mainFrame.evaluate(({ catchCopy, freeComment, biko, netCatch, netFreeMemo, costItems }) => {
       const out = [];
       const fields = [
         { id: "bukkenCatch", val: catchCopy },
@@ -1366,10 +1380,12 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData) {
       // etcHiyoShosai: etcHiyoFlg=ON時に必須
       // hoshoninDaikoShosai: 保証人代行会社の詳細
       const nameFields = [];
-      // Extract initial cost-related text from biko
-      // Split by 、。\n only (NOT spaces/half-width commas — those break amounts like "22,000円")
+      // Extract initial cost-related text from biko or 物確 structured data
       let etcText = '鍵交換代・その他初期費用';
-      if (biko) {
+      if (costItems && costItems.length > 0) {
+        // 物確 structured: list each item with amount
+        etcText = costItems.join('、');
+      } else if (biko) {
         const costKeywords = ['鍵交換', '消毒', 'クリーニング', '保険', '損保', '火災', '初期費用',
           '鍵代', '消臭', '室内清掃', '安心サポート', '入居サポート', '24時間サポート',
           '抗菌', '害虫駆除', '仲介手数料', '事務手数料', '書類作成', '契約事務',
@@ -1394,7 +1410,7 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData) {
         }
       }
       return out;
-    }, { catchCopy: truncCatch, freeComment: truncComment, biko: truncBiko, netCatch: NET_CATCH, netFreeMemo: NET_FREE_MEMO });
+    }, { catchCopy: truncCatch, freeComment: truncComment, biko, netCatch: NET_CATCH, netFreeMemo: NET_FREE_MEMO, costItems });
 
     const ok = result.filter(r => !r.startsWith("!"));
     const ng = result.filter(r => r.startsWith("!")).map(r => r.slice(1));
@@ -2097,7 +2113,10 @@ async function fillTokucho(mainFrame, reinsData) {
     reinsData.設備フリー || "",
     reinsData.設備 || "",
     reinsData.条件フリー || "",
+    reinsData.備考1 || "",
+    reinsData.備考2 || "",
     reinsData.備考3 || "",
+    reinsData.その他一時金 || "",
   ].map(norm);
   const codesToCheck = new Set();
 
@@ -2383,100 +2402,133 @@ function norm(str) {
     .trim();
 }
 
+/**
+ * forrent.jp の備考・特記事項欄向け全角変換
+ * 半角カナ・半角英数字・半角記号が禁止のため、全て全角に変換する
+ */
+function toFullWidth(str) {
+  if (!str) return "";
+  // Half-width katakana → full-width katakana
+  const kanaMap = {
+    "ｶﾞ":"ガ","ｷﾞ":"ギ","ｸﾞ":"グ","ｹﾞ":"ゲ","ｺﾞ":"ゴ",
+    "ｻﾞ":"ザ","ｼﾞ":"ジ","ｽﾞ":"ズ","ｾﾞ":"ゼ","ｿﾞ":"ゾ",
+    "ﾀﾞ":"ダ","ﾁﾞ":"ヂ","ﾂﾞ":"ヅ","ﾃﾞ":"デ","ﾄﾞ":"ド",
+    "ﾊﾞ":"バ","ﾋﾞ":"ビ","ﾌﾞ":"ブ","ﾍﾞ":"ベ","ﾎﾞ":"ボ",
+    "ﾊﾟ":"パ","ﾋﾟ":"ピ","ﾌﾟ":"プ","ﾍﾟ":"ペ","ﾎﾟ":"ポ",
+    "ｳﾞ":"ヴ",
+    "ｱ":"ア","ｲ":"イ","ｳ":"ウ","ｴ":"エ","ｵ":"オ",
+    "ｶ":"カ","ｷ":"キ","ｸ":"ク","ｹ":"ケ","ｺ":"コ",
+    "ｻ":"サ","ｼ":"シ","ｽ":"ス","ｾ":"セ","ｿ":"ソ",
+    "ﾀ":"タ","ﾁ":"チ","ﾂ":"ツ","ﾃ":"テ","ﾄ":"ト",
+    "ﾅ":"ナ","ﾆ":"ニ","ﾇ":"ヌ","ﾈ":"ネ","ﾉ":"ノ",
+    "ﾊ":"ハ","ﾋ":"ヒ","ﾌ":"フ","ﾍ":"ヘ","ﾎ":"ホ",
+    "ﾏ":"マ","ﾐ":"ミ","ﾑ":"ム","ﾒ":"メ","ﾓ":"モ",
+    "ﾔ":"ヤ","ﾕ":"ユ","ﾖ":"ヨ",
+    "ﾗ":"ラ","ﾘ":"リ","ﾙ":"ル","ﾚ":"レ","ﾛ":"ロ",
+    "ﾜ":"ワ","ｦ":"ヲ","ﾝ":"ン",
+    "ｧ":"ァ","ｨ":"ィ","ｩ":"ゥ","ｪ":"ェ","ｫ":"ォ",
+    "ｯ":"ッ","ｬ":"ャ","ｭ":"ュ","ｮ":"ョ",
+    "ｰ":"ー","｡":"。","｢":"「","｣":"」","､":"、","･":"・",
+  };
+  // Replace dakuten/handakuten combos first (2-char → 1-char), then singles
+  let result = str;
+  for (const [hw, fw] of Object.entries(kanaMap)) {
+    result = result.split(hw).join(fw);
+  }
+  // Half-width ASCII (0x21-0x7E) → full-width (0xFF01-0xFF5E)
+  // Space (0x20) → full-width space (0x3000)
+  result = result.replace(/[\x20-\x7E]/g, c => {
+    if (c === " ") return "　";
+    return String.fromCharCode(c.charCodeAt(0) + 0xFEE0);
+  });
+  return result;
+}
 
 /**
- * 一時保存 — フォーム内容をドラフトとして保存（本登録はしない）
- * forrent.jpの一時保存ボタンをクリックして、入力内容を下書きとして保持。
- * 担当者が後から確認→本登録するフロー用。
+ * 物件登録 — 登録ボタン（regButton2）を押す
+ * エラーが出た場合はダイアログを受諾してリトライ（最大2回）
+ * Notionステータスは常に「登録済み」
  */
-async function saveDraft(page, mainFrame) {
-  console.log("[forrent] === SAVE DRAFT (一時保存) START ===");
+async function registerProperty(page, mainFrame) {
+  console.log("[forrent] === REGISTER PROPERTY START ===");
   try {
-    await mainFrame.evaluate(() => window.scrollTo(0, 0));
-    await mainFrame.waitForTimeout(500);
-
     const dialogs = [];
     page.on("dialog", async (dialog) => {
       dialogs.push({ type: dialog.type(), message: dialog.message() });
       await dialog.accept();
     });
 
-    // 一時保存ボタンを探してクリック
-    const draftResult = await mainFrame.evaluate(() => {
-      // ID-based search
-      const byId = document.getElementById("tempSaveButton")
-        || document.getElementById("draftButton")
-        || document.getElementById("ichiji_hozon")
-        || document.getElementById("tmpSaveButton");
-      if (byId) { byId.click(); return { found: true, method: "id", label: byId.value || byId.textContent || byId.id }; }
+    const MAX_ATTEMPTS = 2;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      console.log(`[forrent] 登録試行 ${attempt}/${MAX_ATTEMPTS}`);
 
-      // Value/text search for 一時保存 buttons
-      const buttons = [...document.querySelectorAll("input[type='button'], input[type='submit'], button, input[type='image']")];
-      for (const btn of buttons) {
-        const text = (btn.value || btn.textContent || btn.alt || "").trim();
-        if (text.includes("一時保存") || text.includes("下書き") || text.includes("保存")) {
-          btn.click();
-          return { found: true, method: "text", label: text };
+      // mainFrame を最新に再取得
+      mainFrame = page.frame({ name: "main" }) || mainFrame;
+      await mainFrame.evaluate(() => window.scrollTo(0, 0));
+      await mainFrame.waitForTimeout(500);
+
+      // regButton2（登録）をクリック
+      const clicked = await mainFrame.evaluate(() => {
+        const btn = document.getElementById("regButton2");
+        if (btn) { btn.click(); return btn.value || btn.alt || "regButton2"; }
+        // Fallback: テキスト検索
+        const buttons = [...document.querySelectorAll("input[type='button'], input[type='submit'], input[type='image'], button")];
+        for (const b of buttons) {
+          const t = (b.value || b.textContent || b.alt || "").trim();
+          if (t.includes("登録") && !t.includes("削除") && !t.includes("一時")) {
+            b.click(); return t;
+          }
         }
+        return null;
+      });
+
+      if (!clicked) {
+        console.log("[forrent] 登録ボタンが見つかりません");
+        return { saved: false, registrationType: null, error: "登録ボタンが見つかりません" };
       }
 
-      // Image button search (forrent.jp often uses image buttons)
-      const imgs = [...document.querySelectorAll("img[onclick], a img")];
-      for (const img of imgs) {
-        const alt = img.alt || "";
-        const src = img.src || "";
-        if (alt.includes("一時保存") || alt.includes("保存") || src.includes("temp") || src.includes("draft") || src.includes("ichiji")) {
-          img.click();
-          return { found: true, method: "img", label: alt || src.split("/").pop() };
-        }
+      console.log(`[forrent] 登録ボタンクリック: ${clicked}`);
+      await mainFrame.waitForTimeout(10000);
+
+      // 結果確認
+      const confirmFrame = page.frame({ name: "main" }) || mainFrame;
+      const result = await confirmFrame.evaluate(() => {
+        const body = document.body?.innerText || "";
+        const errorEls = document.querySelectorAll('.errorMessage, .error, [class*="error"], [class*="Error"]');
+        const errors = [...errorEls].map(el => el.textContent.trim()).filter(t => t.length > 2);
+        const hasError = errors.length > 0 || body.includes("エラー");
+        const scoreMatch = body.match(/名寄せスコア[：:\s]*(\d+)/);
+        const isComplete = body.includes("完了") || body.includes("登録しました");
+        return { errors, hasError, isComplete, score: scoreMatch ? parseInt(scoreMatch[1]) : null };
+      });
+
+      if (dialogs.length > 0) {
+        console.log(`[forrent] ダイアログ: ${dialogs.map(d => d.message).join(", ")}`);
       }
 
-      // regButton1 is often the draft/temp save button (regButton2 = confirm)
-      const reg1 = document.getElementById("regButton1");
-      if (reg1) {
-        const label = reg1.value || reg1.alt || "regButton1";
-        // Only use regButton1 if it looks like a save button (not delete/cancel)
-        if (!label.includes("削除") && !label.includes("キャンセル")) {
-          reg1.click();
-          return { found: true, method: "regButton1", label };
+      // 登録成功 or 最終試行
+      if (!result.hasError || attempt === MAX_ATTEMPTS) {
+        if (result.errors.length > 0) {
+          console.log(`[forrent] バリデーションエラー残存: ${result.errors.slice(0, 5).join(", ")}`);
         }
+        console.log(`[forrent] === REGISTER END === 登録済み (score: ${result.score})`);
+        return {
+          saved: true,
+          registrationType: "登録済み",
+          score: result.score,
+          dialogs,
+          errors: result.errors,
+        };
       }
 
-      return { found: false, method: null, label: null };
-    });
-
-    if (!draftResult.found) {
-      console.log("[forrent] 一時保存ボタンが見つかりません");
-      return { saved: false, error: "一時保存ボタンが見つかりません" };
+      // エラーあり → リトライ（ダイアログは既にaccept済み）
+      console.log(`[forrent] エラー検出 (${result.errors.length}件) → リトライ`);
+      for (const e of result.errors.slice(0, 5)) console.log(`[forrent]   - ${e}`);
+      dialogs.length = 0; // reset for next attempt
     }
-
-    console.log(`[forrent] 一時保存ボタンクリック: ${draftResult.label} (${draftResult.method})`);
-    await mainFrame.waitForTimeout(5000);
-
-    // Confirm the save was successful
-    const confirmFrame = page.frame({ name: "main" }) || mainFrame;
-    const saveResult = await confirmFrame.evaluate(() => {
-      const body = document.body?.innerText || "";
-      const hasSuccess = body.includes("保存") || body.includes("完了") || body.includes("一時保存");
-      const errorEls = document.querySelectorAll('.errorMessage, .error, [class*="error"]');
-      const errors = [...errorEls].map(el => el.textContent.trim()).filter(Boolean);
-      return { bodySnippet: body.slice(0, 1000), hasSuccess, errors };
-    });
-
-    if (dialogs.length > 0) {
-      console.log(`[forrent] ダイアログ: ${dialogs.map(d => d.message).join(", ")}`);
-    }
-
-    if (saveResult.errors.length > 0) {
-      console.log(`[forrent] 一時保存エラー: ${saveResult.errors.join(", ")}`);
-      return { saved: false, error: saveResult.errors.join("; "), dialogs };
-    }
-
-    console.log("[forrent] === SAVE DRAFT END === OK");
-    return { saved: true, label: draftResult.label, method: draftResult.method, dialogs };
   } catch (e) {
-    console.log(`[forrent] 一時保存エラー: ${e.message}`);
-    return { saved: false, error: e.message };
+    console.log(`[forrent] 登録エラー: ${e.message}`);
+    return { saved: false, registrationType: null, error: e.message };
   }
 }
 
@@ -2491,5 +2543,5 @@ module.exports = {
   uploadImages,
   fillTokucho,
   fillShuhenKankyo,
-  saveDraft,
+  registerProperty,
 };

@@ -1,15 +1,15 @@
 /**
- * 物確プラットフォーム画像取得モジュール
+ * 物確プラットフォーム統合モジュール — 初期費用抽出 + 画像取得
  *
- * REINS画像が不足している場合、管理会社から物確プラットフォームを特定し、
- * ITANDI BB or いえらぶBBから追加画像を取得する。
+ * 管理会社から物確プラットフォーム（ITANDI BB / いえらぶBB）を特定し、
+ * 物件詳細ページから初期費用データと画像を同時に取得する。
  *
  * Flow:
  *   1. REINS 商号 → プラットフォーム判定（fuzzy match）
  *   2. プラットフォームにログイン
  *   3. 建物名 + 部屋番号で検索
- *   4. 物件詳細ページから画像URLを取得
- *   5. 画像をダウンロード
+ *   4. 物件詳細ページから初期費用を抽出（innerText regex）
+ *   5. 同ページから画像URLを取得・ダウンロード
  */
 const fs = require("fs");
 const path = require("path");
@@ -396,7 +396,133 @@ function downloadImage(url, outputPath) {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  メインAPI: 物確プラットフォームから画像を取得
+//  初期費用抽出（innerText regex — プラットフォーム非依存）
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * 物確プラットフォーム詳細ページから初期費用データを抽出
+ *
+ * innerText + regex パターンで抽出するため、DOM構造に依存しない。
+ * forrent.js の initialCostData インターフェースと互換。
+ *
+ * @param {import('playwright').Page} page - 詳細ページが表示された状態のページ
+ * @returns {Promise<Object|null>} 初期費用データ or null
+ */
+async function extractInitialCostsFromPage(page) {
+  console.log("[bukaku] 初期費用データを抽出中...");
+
+  const text = await page.evaluate(() => document.body.innerText);
+  if (!text || text.length < 100) {
+    console.log("[bukaku] ページテキストが取得できません");
+    return null;
+  }
+
+  const result = {};
+
+  // Helper: extract yen amount from text near a keyword
+  const extractYen = (keyword) => {
+    const patterns = [
+      new RegExp(`${keyword}[代費用]?[\\s：:]*([\\d,]+)\\s*円`, "i"),
+      new RegExp(`${keyword}[代費用]?[\\s：:]*([\\d.]+)\\s*万\\s*円`, "i"),
+    ];
+    for (const re of patterns) {
+      const m = text.match(re);
+      if (m) {
+        if (re.source.includes("万")) {
+          return Math.round(parseFloat(m[1]) * 10000);
+        }
+        return parseInt(m[1].replace(/,/g, ""), 10);
+      }
+    }
+    return null;
+  };
+
+  // ── Initial cost items ──
+
+  const kagikoukanYen = extractYen("鍵交換");
+  if (kagikoukanYen) result["鍵交換代"] = kagikoukanYen;
+
+  const shoudokuYen = extractYen("消毒") || extractYen("消臭") || extractYen("抗菌");
+  if (shoudokuYen) result["消毒代"] = shoudokuYen;
+
+  const cleaningYen = extractYen("クリーニング") || extractYen("室内清掃") || extractYen("清掃");
+  if (cleaningYen) result["クリーニング代"] = cleaningYen;
+
+  const supportYen = extractYen("安心サポート") || extractYen("入居サポート") || extractYen("24時間サポート");
+  if (supportYen) result["サポート代"] = supportYen;
+
+  const jimuYen = extractYen("事務手数料") || extractYen("書類作成") || extractYen("契約事務");
+  if (jimuYen) result["事務手数料"] = jimuYen;
+
+  // ── Guarantee company ──
+
+  const hoshoCompanies = [
+    "全保連", "日本セーフティー", "日本セーフティ", "Casa", "CASA", "カーサ",
+    "ジェイリース", "オリコ", "エポス", "ジャックス", "アプラス",
+    "日本賃貸保証", "フォーシーズ", "エルズサポート", "日商トレーディング",
+    "ナップ賃貸保証", "大和リビング保証", "レジデンシャルパートナーズ",
+  ];
+  for (const co of hoshoCompanies) {
+    if (text.includes(co)) {
+      result["保証会社"] = co;
+      break;
+    }
+  }
+
+  // Guarantee fee (percentage or fixed)
+  const rateMatch = text.match(/(?:初回)?保証(?:委託)?料?\s*[:：]?\s*(?:(?:賃料等?)?(?:合計)?の?)?\s*(\d+(?:\.\d+)?)\s*[%％]/);
+  if (rateMatch) result["保証料率"] = parseFloat(rateMatch[1]);
+
+  const fixedMatch = text.match(/(?:初回)?保証(?:委託)?料?\s*[:：]?\s*([\d,]+)\s*円/);
+  if (fixedMatch && !rateMatch) {
+    result["保証料円額"] = parseInt(fixedMatch[1].replace(/,/g, ""), 10);
+  }
+
+  // ── Fire insurance ──
+
+  const kasaiYen = extractYen("火災保険") || extractYen("損害保険") || extractYen("損保");
+  if (kasaiYen) result["火災保険"] = kasaiYen;
+
+  if (!kasaiYen) {
+    const kasaiMatch = text.match(/火災保険[料]?\s*([\d,.]+)\s*万?\s*円/);
+    if (kasaiMatch) {
+      const val = kasaiMatch[0].includes("万")
+        ? Math.round(parseFloat(kasaiMatch[1]) * 10000)
+        : parseInt(kasaiMatch[1].replace(/,/g, ""), 10);
+      if (val > 0) result["火災保険"] = val;
+    }
+  }
+
+  // ── AD (advertising fee) ──
+
+  const adMatch = text.match(/(?:AD|広告[料費転載])[^\d]*([\d.]+)\s*(?:[%％]|ヶ?月)/);
+  if (adMatch) result["AD"] = adMatch[1];
+
+  if (text.includes("広告転載不可") || text.includes("転載不可")) {
+    result["広告転載"] = "不可";
+  } else if (text.includes("広告転載可") || text.includes("転載可")) {
+    result["広告転載"] = "可";
+  }
+
+  // ── Broker fee ──
+
+  const chuukaiYen = extractYen("仲介手数料");
+  if (chuukaiYen) result["仲介手数料"] = chuukaiYen;
+
+  // ── Summary ──
+
+  const keys = Object.keys(result);
+  if (keys.length === 0) {
+    console.log("[bukaku] 初期費用データが抽出できませんでした");
+    return null;
+  }
+
+  console.log(`[bukaku] 初期費用抽出結果: ${JSON.stringify(result, null, 2)}`);
+  return result;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  メインAPI: 物確プラットフォームから初期費用 + 画像を取得
 // ════════════════════════════════════════════════════════════════
 
 /**
@@ -428,20 +554,23 @@ function checkImageSufficiency(processedImages) {
 }
 
 /**
- * 物確プラットフォームから追加画像を取得
+ * 物確プラットフォームから初期費用 + 画像を同時取得
+ *
+ * 常に詳細ページに遷移して初期費用を抽出し、同時に画像もダウンロードする。
+ * 画像の使用判断（不足時のみマージ）は呼び出し元（server.js）で行う。
  *
  * @param {Object} context - Playwright BrowserContext
  * @param {Object} reinsData - REINS抽出データ
  * @param {string} downloadDir - 画像保存先ディレクトリ
- * @returns {Array<{localPath: string, source: string}>} ダウンロードした画像パス
+ * @returns {{ initialCosts: Object|null, images: Array }} 初期費用 + 画像パス
  */
-async function fetchBukakuImages(context, reinsData, downloadDir) {
+async function fetchBukakuData(context, reinsData, downloadDir) {
   const shogo = reinsData.商号 || "";
   const { platform, companyName } = detectPlatform(shogo);
 
   if (!platform) {
     console.log(`[bukaku] 商号「${shogo}」→ 物確プラットフォーム対応なし`);
-    return [];
+    return { initialCosts: null, images: [] };
   }
 
   console.log(`[bukaku] 商号「${shogo}」→ ${companyName} → ${platform}`);
@@ -451,39 +580,46 @@ async function fetchBukakuImages(context, reinsData, downloadDir) {
 
   if (!buildingName) {
     console.log("[bukaku] 建物名が空のためスキップ");
-    return [];
+    return { initialCosts: null, images: [] };
   }
 
   const page = await context.newPage();
   const downloaded = [];
+  let initialCosts = null;
 
   try {
     let imageUrls = [];
 
     if (platform === "itandi") {
       const loggedIn = await itandiLogin(page);
-      if (!loggedIn) return [];
+      if (!loggedIn) return { initialCosts: null, images: [] };
 
       const detailLinks = await itandiSearchProperty(page, buildingName, roomNumber);
       if (detailLinks.length === 0) {
-        // 部屋番号なしで再検索
         const linksNoRoom = await itandiSearchProperty(page, buildingName, "");
-        if (linksNoRoom.length === 0) return [];
+        if (linksNoRoom.length === 0) return { initialCosts: null, images: [] };
         imageUrls = await itandiGetImages(page, linksNoRoom[0]);
       } else {
         imageUrls = await itandiGetImages(page, detailLinks[0]);
       }
+
+      // Detail page is loaded — extract initial costs
+      initialCosts = await extractInitialCostsFromPage(page);
+
     } else if (platform === "ielovebb") {
       const loggedIn = await ieloveBBLogin(page);
-      if (!loggedIn) return [];
+      if (!loggedIn) return { initialCosts: null, images: [] };
 
       const detailUrl = await ieloveBBSearchProperty(page, buildingName, roomNumber);
-      if (!detailUrl) return [];
+      if (!detailUrl) return { initialCosts: null, images: [] };
 
       imageUrls = await ieloveBBGetImages(page, detailUrl);
+
+      // Detail page is loaded — extract initial costs
+      initialCosts = await extractInitialCostsFromPage(page);
     }
 
-    // 画像ダウンロード
+    // Download images
     console.log(`[bukaku] ${imageUrls.length}枚の画像をダウンロード中...`);
     const bukakuDir = path.join(downloadDir, "bukaku");
     fs.mkdirSync(bukakuDir, { recursive: true });
@@ -510,13 +646,13 @@ async function fetchBukakuImages(context, reinsData, downloadDir) {
     await page.close().catch(() => {});
   }
 
-  console.log(`[bukaku] ${downloaded.length}枚ダウンロード完了`);
-  return downloaded;
+  console.log(`[bukaku] 初期費用: ${initialCosts ? Object.keys(initialCosts).length + "項目" : "なし"}, 画像: ${downloaded.length}枚`);
+  return { initialCosts, images: downloaded };
 }
 
 module.exports = {
   detectPlatform,
   checkImageSufficiency,
-  fetchBukakuImages,
+  fetchBukakuData,
   COMPANY_PLATFORM_MAP,
 };

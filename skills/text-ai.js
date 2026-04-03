@@ -1,13 +1,13 @@
 /**
- * AI Text Pipeline — Claude API
+ * AI Text Pipeline — GPT-4o-mini
  *
  * Generates キャッチコピー and フリーコメント from REINS property data
  * to maximize SUUMO 名寄せスコア (2 points for catch copy + comment).
  */
 
-const Anthropic = require("@anthropic-ai/sdk");
+const OpenAI = require("openai");
 
-const client = new Anthropic();
+const openai = new OpenAI();
 
 /**
  * Generate catch copy and free comment from REINS property data.
@@ -53,13 +53,13 @@ ${propSummary}
 - 駅徒歩分数、間取り、築年数など具体的数値を含める`;
 
   try {
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
       max_tokens: 500,
       messages: [{ role: "user", content: prompt }],
     });
 
-    const text = response.content[0].text.trim();
+    const text = (response.choices[0]?.message?.content || "").trim();
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     return jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
   } catch (err) {

@@ -139,7 +139,7 @@ async function runNyuko(socket, reinsId) {
         for (const photo of shuhenPhotos) {
           processedImages.push({
             localPath: photo.localPath,
-            categoryId: "14",
+            categoryId: "SH",
             categoryLabel: "周辺環境",
             facilityType: photo.facilityType,
             facilityName: photo.facilityName,

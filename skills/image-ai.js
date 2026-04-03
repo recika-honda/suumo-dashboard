@@ -1,57 +1,72 @@
 /**
- * Image Pipeline — Claude Vision 個別分類 + Sharp リサイズ
+ * Image Pipeline — GPT-4o-mini Vision 個別分類 + Sharp リサイズ
  *
- * 各画像を1枚ずつClaude Visionで分類し、正確なカテゴリを割り当てる。
+ * 各画像を1枚ずつGPT-4o-mini Visionで分類し、正確なカテゴリを割り当てる。
  * 使用済みカテゴリは候補から除外し、重複を防ぐ。
  */
 
-const Anthropic = require("@anthropic-ai/sdk");
+const OpenAI = require("openai");
 const sharp = require("sharp");
 const fs = require("fs");
 const path = require("path");
 
-const client = new Anthropic();
+const openai = new OpenAI();
 
+const VISION_MODEL = "gpt-4o-mini";
+
+// forrent.jp プルダウン選択肢と1:1対応（21カテゴリ）
 const SUUMO_CATEGORIES = [
+  // 5pt — 名寄せスコア主要配点
   { id: "01", label: "居室・リビング", score: 5 },
   { id: "02", label: "キッチン", score: 5 },
-  { id: "03", label: "バス・シャワー", score: 5 },
+  { id: "03", label: "バス・シャワールーム", score: 5 },
   { id: "04", label: "間取り図", score: 5 },
-  { id: "05", label: "外観", score: 5 },
-  { id: "06", label: "洋室", score: 1 },
-  { id: "07", label: "和室", score: 1 },
-  { id: "08", label: "トイレ", score: 1 },
-  { id: "09", label: "洗面所", score: 1 },
-  { id: "10", label: "玄関", score: 1 },
-  { id: "11", label: "収納", score: 1 },
-  { id: "12", label: "バルコニー", score: 1 },
-  { id: "13", label: "共用部", score: 1 },
-  { id: "14", label: "周辺環境", score: 1 },
+  { id: "05", label: "建物外観", score: 5 },
+  // 1pt — 室内系 (shitsunaiShashinCategory 12択)
+  { id: "06", label: "その他部屋・スペース", score: 1 },
+  { id: "07", label: "トイレ", score: 1 },
+  { id: "08", label: "洗面設備", score: 1 },
+  { id: "09", label: "収納", score: 1 },
+  { id: "10", label: "バルコニー", score: 1 },
+  { id: "11", label: "庭", score: 1 },
+  { id: "12", label: "玄関", score: 1 },
+  { id: "13", label: "セキュリティ", score: 1 },
+  { id: "14", label: "その他設備", score: 1 },
+  // 1pt — 共有部分系
+  { id: "15", label: "エントランス", score: 1 },
+  { id: "16", label: "ロビー", score: 1 },
+  { id: "17", label: "駐車場", score: 1 },
+  { id: "18", label: "その他共有部分", score: 1 },
+  // 1pt — その他系
+  { id: "19", label: "眺望", score: 1 },
+  { id: "20", label: "省エネ性能ラベル", score: 1 },
+  // 0pt — catch-all
+  { id: "21", label: "その他", score: 0 },
 ];
 
+// 複数画像に同じカテゴリを許可するもの
+const ALLOW_DUPLICATE = new Set(["06", "14", "18", "21"]);
+
 /**
- * 1枚の画像をClaude Visionで分類
+ * 1枚の画像をGPT-4o-mini Visionで分類
  * @param {Buffer} imageBuffer - JPEG画像バッファ
  * @param {Array<{id: string, label: string}>} availableCategories - 使用可能なカテゴリ
  * @returns {string|null} カテゴリID
  */
 async function classifySingleImage(imageBuffer, availableCategories) {
   const catList = availableCategories.map((c) => `${c.id}=${c.label}`).join(", ");
+  const b64 = imageBuffer.toString("base64");
 
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
+  const response = await openai.chat.completions.create({
+    model: VISION_MODEL,
     max_tokens: 50,
     messages: [
       {
         role: "user",
         content: [
           {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/jpeg",
-              data: imageBuffer.toString("base64"),
-            },
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${b64}`, detail: "low" },
           },
           {
             type: "text",
@@ -63,17 +78,31 @@ async function classifySingleImage(imageBuffer, availableCategories) {
 - 間取り図・平面図・フロアプラン → 必ず04
 - 建物の外観写真（外から撮影、建物全体や一部が空・道路・植栽と共に写っている） → 05
 - リビング・ダイニング・居間（広い部屋、ソファ、テーブル） → 01
-- 洋室（ベッド、クローゼットのある個室） → 06
-- キッチン（コンロ、シンク、調理台が写っている） → 02
-- バスルーム・浴室（浴槽、シャワーが写っている） → 03
-- トイレ（便器が写っている） → 08
-- 洗面台・洗面所（洗面ボウル、鏡） → 09
+- 洋室・和室・寝室・個室 → 06
+- キッチン（コンロ、シンク、調理台） → 02
+- バスルーム・浴室（浴槽、シャワー） → 03
+- トイレ（便器） → 07
+- 洗面台・洗面所（洗面ボウル、鏡） → 08
+- 収納・クローゼット・押入れ → 09
+- バルコニー・ベランダ → 10
+- 庭・テラス・専用庭 → 11
+- 玄関・靴箱・玄関ドア内側 → 12
+- オートロック・防犯カメラ・モニター付きインターホン → 13
+- エアコン・給湯リモコン・コンセント等の設備クローズアップ → 14
+- 建物エントランス（自動ドア、集合ポスト、建物入口ホール） → 15
+- ロビー・共用ラウンジ・待合スペース → 16
+- 駐車場・駐輪場 → 17
+- 共用廊下・階段・ゴミ置場・宅配ボックス等 → 18
+- 窓からの眺望（室内から外を撮影、景色が主題） → 19
+- 省エネ性能ラベル（緑黄の帯、星マーク、住宅の省エネ表示） → 20
+- 上記いずれにも明確に該当しない → 21
 - QRコードの画像 → 「QR」とだけ回答
 
 重要ルール:
 - 画像に実際に写っているものだけで判断。外部情報に頼らない。
-- 05(外観)は「建物を外から撮影した写真」のみ。室内の壁・床・天井・窓が見える場合は外観ではなく室内カテゴリ(01,02,03,06,08,09等)。
-- 窓から外の景色が見えても、撮影位置が室内なら外観(05)ではない。
+- 05(建物外観)は「建物を外から撮影した写真」のみ。室内が見える場合は室内カテゴリ。
+- 窓から外の景色が見えても、撮影位置が室内なら05ではない。景色が主題なら19(眺望)。
+- 部屋が主題で窓も見えるだけなら01または06。
 
 IDのみ回答（例: 01）。`,
           },
@@ -82,7 +111,7 @@ IDのみ回答（例: 01）。`,
     ],
   });
 
-  const text = response.content[0].text.trim();
+  const text = (response.choices[0]?.message?.content || "").trim();
   if (/QR/i.test(text)) {
     return "QR";
   }
@@ -94,7 +123,7 @@ IDのみ回答（例: 01）。`,
 }
 
 /**
- * 画像を個別にClaude Visionで分類し、Sharp でリサイズ
+ * 画像を個別にGPT-4o-mini Visionで分類し、Sharp でリサイズ
  *
  * @param {Array<{index: number, localPath: string}>} downloaded
  * @param {string} downloadDir
@@ -120,20 +149,25 @@ async function analyzeAndCropImages(downloaded, downloadDir, existingCategories 
     "リビング": "01", "居室": "01", "LD": "01",
     "キッチン": "02", "台所": "02",
     "バス": "03", "浴室": "03", "風呂": "03",
-    "洋室": "06", "ベッドルーム": "06",
-    "和室": "07",
-    "トイレ": "08",
-    "洗面": "09",
-    "玄関": "10",
-    "収納": "11", "クローゼット": "11",
-    "バルコニー": "12", "ベランダ": "12",
-    "エントランス": "13", "共用": "13",
-    "周辺": "14",
+    "洋室": "06", "ベッドルーム": "06", "和室": "06", "寝室": "06",
+    "トイレ": "07",
+    "洗面": "08",
+    "収納": "09", "クローゼット": "09", "押入": "09",
+    "バルコニー": "10", "ベランダ": "10",
+    "庭": "11", "テラス": "11",
+    "玄関": "12",
+    "セキュリティ": "13", "防犯": "13", "オートロック": "13",
+    "エントランス": "15",
+    "ロビー": "16",
+    "駐車": "17", "駐輪": "17",
+    "共用": "18", "ゴミ置": "18",
+    "眺望": "19", "景色": "19",
+    "省エネ": "20",
   };
 
   for (const img of validImages) {
     const buffer = fs.readFileSync(img.localPath);
-    const available = SUUMO_CATEGORIES.filter((c) => !usedCategories.has(c.id));
+    const available = SUUMO_CATEGORIES.filter((c) => !usedCategories.has(c.id) || ALLOW_DUPLICATE.has(c.id));
 
     let catId = null;
     try {
@@ -169,9 +203,11 @@ async function analyzeAndCropImages(downloaded, downloadDir, existingCategories 
       }
     }
 
-    // Final fallback: fill high-score categories first (NO title-based fallback)
+    // Final fallback: 5ptカテゴリ優先 → その他(21) → 先頭
     if (!catId) {
-      const fallback = available.find((c) => c.score === 5) || available[0];
+      const fallback5pt = available.find((c) => c.score === 5);
+      const fallbackOther = available.find((c) => c.id === "21");
+      const fallback = fallback5pt || fallbackOther || available[0];
       catId = fallback?.id;
       if (catId) console.log(`[image] #${img.index} → generic fallback: ${SUUMO_CATEGORIES.find(c => c.id === catId)?.label}`);
     }
@@ -212,9 +248,9 @@ async function analyzeAndCropImages(downloaded, downloadDir, existingCategories 
     }
   }
 
-  // Sort by staff-specified order:
-  // 間取り→外観→リビング→その他・洋室→キッチン→バス→トイレ→洗面設備→収納→その他設備→エントランス→ロビー→その他共有部分→その他
-  const UPLOAD_ORDER = ["04", "05", "01", "06", "02", "03", "08", "09", "11", "10", "12", "13", "14", "07"];
+  // Sort by slot priority:
+  // 間取り→建物外観→居室→その他部屋→キッチン→バス→トイレ→洗面→収納→バルコニー→庭→玄関→セキュリティ→その他設備→エントランス→ロビー→駐車場→その他共有→眺望→省エネ→その他
+  const UPLOAD_ORDER = ["04", "05", "01", "06", "02", "03", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21"];
   return processedImages.sort((a, b) => {
     const idxA = UPLOAD_ORDER.indexOf(a.categoryId);
     const idxB = UPLOAD_ORDER.indexOf(b.categoryId);
@@ -238,11 +274,11 @@ async function cropMissingCategories(processedImages, downloaded, downloadDir) {
 
   const presentCats = new Set(processedImages.map(img => img.categoryId));
 
-  // 切り抜き可能な5ptカテゴリのみ対象（間取り04・外観05は他写真から切り出せない）
+  // 切り抜き可能な5ptカテゴリのみ対象（間取り04・建物外観05は他写真から切り出せない）
   const CROPPABLE = [
     { id: "01", label: "居室・リビング", hint: "リビング、ダイニング、居間（広い部屋、ソファ、テーブル）" },
     { id: "02", label: "キッチン", hint: "キッチン、コンロ、シンク、調理台、IHクッキングヒーター" },
-    { id: "03", label: "バス・シャワー", hint: "浴室、浴槽、シャワー、バスルーム" },
+    { id: "03", label: "バス・シャワールーム", hint: "浴室、浴槽、シャワー、バスルーム" },
   ];
 
   const missingCats = CROPPABLE.filter(c => !presentCats.has(c.id));
@@ -279,15 +315,16 @@ async function cropMissingCategories(processedImages, downloaded, downloadDir) {
 
       // Vision: この画像に対象エリアが部分的に写っているか判定 + 切り抜き座標取得
       try {
-        const response = await client.messages.create({
-          model: "claude-sonnet-4-6",
+        const b64 = buffer.toString("base64");
+        const response = await openai.chat.completions.create({
+          model: VISION_MODEL,
           max_tokens: 200,
           messages: [{
             role: "user",
             content: [
               {
-                type: "image",
-                source: { type: "base64", media_type: "image/jpeg", data: buffer.toString("base64") },
+                type: "image_url",
+                image_url: { url: `data:image/jpeg;base64,${b64}`, detail: "low" },
               },
               {
                 type: "text",
@@ -310,7 +347,7 @@ JSONのみ回答。`,
           }],
         });
 
-        const text = response.content[0].text.trim();
+        const text = (response.choices[0]?.message?.content || "").trim();
         const jsonMatch = text.match(/\{[^}]+\}/);
         if (!jsonMatch) continue;
 

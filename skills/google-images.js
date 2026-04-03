@@ -37,6 +37,10 @@ const BRAND_LOGOS = {
   "イオン": "aeon.png",
   "イトーヨーカドー": "ito-yokado.png",
   "業務スーパー": "gyoumu-super.png",
+  "オオゼキ": "ozeki.png",
+  "セイムス": "seims.png", "SEIMS": "seims.png",
+  "パルケ": "parque.png", "Parque": "parque.png",
+  "信濃屋": "shinanoya.png",
   // ドラッグストア
   "マツモトキヨシ": "matsukiyo.png", "マツキヨ": "matsukiyo.png",
   "スギ薬局": "sugi-pharmercy.png",

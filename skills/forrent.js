@@ -339,13 +339,21 @@ async function fillPropertyForm(mainFrame, reinsData, initialCostData = null) {
   }
 
   // 構造 — select name="${bukkenInputForm.kozoShuCd}"
-  //   鉄筋コン(01)..その他(99)
-  //   REINS値に「造」が付くケースあり（鉄筋コンクリート造, RC造 等）→ 除去してマッチ
-  if (reinsData.建物構造) {
-    const structNorm = norm(reinsData.建物構造).replace(/造$/, "");
-    const code = STRUCTURE_CODE[structNorm];
-    if (code) ok("構造", await selectByName(mainFrame, `${S}kozoShuCd}`, code, "構造"));
-    else console.log(`[forrent] x 構造: "${structNorm}" → STRUCTURE_CODEにマッチなし`);
+  //   鉄筋コン(01)..その他(99)  ※必須フィールド — マッチしない場合はその他(99)で埋める
+  {
+    let structCode = "99"; // fallback: その他
+    if (reinsData.建物構造) {
+      const structNorm = norm(reinsData.建物構造).replace(/造$/, "");
+      const matched = STRUCTURE_CODE[structNorm];
+      if (matched) {
+        structCode = matched;
+      } else {
+        console.log(`[forrent] ! 構造: "${structNorm}" → マッチなし → その他(99)にフォールバック`);
+      }
+    } else {
+      console.log("[forrent] ! 構造: REINS未取得 → その他(99)にフォールバック");
+    }
+    ok("構造", await selectByName(mainFrame, `${S}kozoShuCd}`, structCode, "構造"));
   }
 
   // 築年 — id="Wareki2Seireki1", max=4 (西暦)
@@ -1515,30 +1523,41 @@ async function setFileInput(frame, inputName, filePath) {
 }
 
 // image-ai.js カテゴリ → forrent.jp スロット マッピング
-const GAIKAN_CATS = ["外観", "共用部"];
-const INTERIOR_CATS = ["居室・リビング", "洋室", "和室", "キッチン", "バス・シャワー",
-  "トイレ", "洗面所", "玄関", "収納", "バルコニー"];
+const GAIKAN_CATS = ["建物外観"];
+const INTERIOR_CATS = [
+  "居室・リビング", "その他部屋・スペース", "キッチン", "バス・シャワールーム",
+  "トイレ", "洗面設備", "収納", "バルコニー", "庭", "玄関",
+  "セキュリティ", "その他設備",
+]; // shitsunaiShashinCategory 12択と完全一致
 const MADORI_CATS = ["間取り図"];
 const SHUHEN_CATS = ["周辺環境"];
 
-// REINS categoryLabel → forrent.jp カテゴリコード
-// 名寄せスコア配点: 居室・リビング=5pt, キッチン=5pt, バス・シャワールーム=5pt, その他=各1pt
+// categoryLabel → forrent.jp カテゴリコード（プルダウン value と1:1対応）
 const FORRENT_CATEGORY_MAP = {
+  // 室内系 (040xxx)
   "居室・リビング": "040101",
+  "その他部屋・スペース": "040102",
   "キッチン": "040103",
-  "バス・シャワー": "040104",
-  "洋室": "040102",       // その他部屋・スペース
-  "和室": "040102",
+  "バス・シャワールーム": "040104",
   "トイレ": "040105",
-  "洗面所": "040106",
+  "洗面設備": "040106",
   "収納": "040107",
   "バルコニー": "040108",
+  "庭": "040109",
   "玄関": "040110",
-  "外観": "020101",
-  "共用部": "030101",
+  "セキュリティ": "040111",
+  "その他設備": "040199",
+  // 外観 (020xxx)
+  "建物外観": "020101",
+  // 共有部分 (030xxx)
   "エントランス": "030101",
-  "間取り図": "999999",
+  "ロビー": "030102",
+  "駐車場": "030103",
+  "その他共有部分": "030199",
+  // その他
   "眺望": "050101",
+  "省エネ性能ラベル": "070101",
+  "その他": "999999",
 };
 
 /**
@@ -1704,7 +1723,9 @@ async function uploadImages(mainFrame, processedImages) {
   const EXTRA_CATEGORIES = [
     { code: "040107", label: "収納" },
     { code: "040108", label: "バルコニー" },
+    { code: "040109", label: "庭" },
     { code: "030101", label: "エントランス" },
+    { code: "030102", label: "ロビー" },
     { code: "040111", label: "セキュリティ" },
     { code: "050101", label: "眺望" },
   ];
@@ -2448,9 +2469,11 @@ function toFullWidth(str) {
 }
 
 /**
- * 物件登録 — 登録ボタン（regButton2）を押す
+ * 物件登録 — 2ステップフロー:
+ *   Step A: regButton2（確認画面へ）をクリック → バリデーション
+ *   Step B: エラーなしなら確認画面上部の「登録」ボタンをクリック → 実登録
+ *
  * エラーが出た場合はダイアログを受諾してリトライ（最大2回）
- * Notionステータスは常に「登録済み」
  */
 async function registerProperty(page, mainFrame) {
   console.log("[forrent] === REGISTER PROPERTY START ===");
@@ -2463,14 +2486,14 @@ async function registerProperty(page, mainFrame) {
 
     const MAX_ATTEMPTS = 2;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      console.log(`[forrent] 登録試行 ${attempt}/${MAX_ATTEMPTS}`);
+      console.log(`[forrent] 確認画面へ 試行 ${attempt}/${MAX_ATTEMPTS}`);
 
       // mainFrame を最新に再取得
       mainFrame = page.frame({ name: "main" }) || mainFrame;
       await mainFrame.evaluate(() => window.scrollTo(0, 0));
       await mainFrame.waitForTimeout(500);
 
-      // regButton2（登録）をクリック
+      // ── Step A: 「確認画面へ」(regButton2) をクリック ──
       const clicked = await mainFrame.evaluate(() => {
         const btn = document.getElementById("regButton2");
         if (btn) { btn.click(); return btn.value || btn.alt || "regButton2"; }
@@ -2478,7 +2501,7 @@ async function registerProperty(page, mainFrame) {
         const buttons = [...document.querySelectorAll("input[type='button'], input[type='submit'], input[type='image'], button")];
         for (const b of buttons) {
           const t = (b.value || b.textContent || b.alt || "").trim();
-          if (t.includes("登録") && !t.includes("削除") && !t.includes("一時")) {
+          if ((t.includes("確認") || t.includes("登録")) && !t.includes("削除") && !t.includes("一時")) {
             b.click(); return t;
           }
         }
@@ -2486,48 +2509,112 @@ async function registerProperty(page, mainFrame) {
       });
 
       if (!clicked) {
-        console.log("[forrent] 登録ボタンが見つかりません");
-        return { saved: false, registrationType: null, error: "登録ボタンが見つかりません" };
+        console.log("[forrent] 確認画面へボタンが見つかりません");
+        return { saved: false, registrationType: null, error: "確認画面へボタンが見つかりません" };
       }
 
-      console.log(`[forrent] 登録ボタンクリック: ${clicked}`);
+      console.log(`[forrent] 確認画面へクリック: ${clicked}`);
       await mainFrame.waitForTimeout(10000);
 
-      // 結果確認
+      // 確認画面のフレームを再取得
       const confirmFrame = page.frame({ name: "main" }) || mainFrame;
-      const result = await confirmFrame.evaluate(() => {
+
+      // バリデーション結果を確認
+      const validation = await confirmFrame.evaluate(() => {
         const body = document.body?.innerText || "";
         const errorEls = document.querySelectorAll('.errorMessage, .error, [class*="error"], [class*="Error"]');
         const errors = [...errorEls].map(el => el.textContent.trim()).filter(t => t.length > 2);
         const hasError = errors.length > 0 || body.includes("エラー");
         const scoreMatch = body.match(/名寄せスコア[：:\s]*(\d+)/);
-        const isComplete = body.includes("完了") || body.includes("登録しました");
-        return { errors, hasError, isComplete, score: scoreMatch ? parseInt(scoreMatch[1]) : null };
+        return { errors, hasError, score: scoreMatch ? parseInt(scoreMatch[1]) : null };
       });
 
       if (dialogs.length > 0) {
         console.log(`[forrent] ダイアログ: ${dialogs.map(d => d.message).join(", ")}`);
       }
 
-      // 登録成功 or 最終試行
-      if (!result.hasError || attempt === MAX_ATTEMPTS) {
-        if (result.errors.length > 0) {
-          console.log(`[forrent] バリデーションエラー残存: ${result.errors.slice(0, 5).join(", ")}`);
-        }
-        console.log(`[forrent] === REGISTER END === 登録済み (score: ${result.score})`);
+      // エラーあり → リトライ
+      if (validation.hasError && attempt < MAX_ATTEMPTS) {
+        console.log(`[forrent] バリデーションエラー (${validation.errors.length}件) → リトライ`);
+        for (const e of validation.errors.slice(0, 5)) console.log(`[forrent]   - ${e}`);
+        dialogs.length = 0;
+        continue;
+      }
+
+      if (validation.hasError) {
+        console.log(`[forrent] バリデーションエラー残存 (最終試行): ${validation.errors.slice(0, 5).join(", ")}`);
         return {
-          saved: true,
-          registrationType: "登録済み",
-          score: result.score,
+          saved: false,
+          registrationType: null,
+          score: validation.score,
           dialogs,
-          errors: result.errors,
+          errors: validation.errors,
+          error: `バリデーションエラー: ${validation.errors[0] || "不明"}`,
         };
       }
 
-      // エラーあり → リトライ（ダイアログは既にaccept済み）
-      console.log(`[forrent] エラー検出 (${result.errors.length}件) → リトライ`);
-      for (const e of result.errors.slice(0, 5)) console.log(`[forrent]   - ${e}`);
-      dialogs.length = 0; // reset for next attempt
+      // ── Step B: 確認画面上部の「登録」ボタンをクリック ──
+      console.log(`[forrent] 確認画面到達 (score: ${validation.score}) → 登録ボタンを押下`);
+
+      const regClicked = await confirmFrame.evaluate(() => {
+        // Search for the registration button at the top of the confirmation screen
+        // Try common patterns: id, value, alt text, button text
+        const candidates = [
+          ...document.querySelectorAll("input[type='button'], input[type='submit'], input[type='image'], button"),
+        ];
+        for (const b of candidates) {
+          const t = (b.value || b.textContent || b.alt || "").trim();
+          // Match "登録" but exclude "確認画面へ", "一時", "削除", "戻る"
+          if (t.includes("登録") && !t.includes("確認") && !t.includes("一時") && !t.includes("削除") && !t.includes("戻")) {
+            b.click();
+            return t;
+          }
+        }
+        // Fallback: try image buttons with src containing "toroku" or "regist"
+        const imgs = [...document.querySelectorAll("input[type='image'], img[onclick]")];
+        for (const img of imgs) {
+          const src = (img.src || img.getAttribute("src") || "").toLowerCase();
+          const alt = (img.alt || "").trim();
+          const onclick = (img.getAttribute("onclick") || "");
+          if (src.includes("toroku") || src.includes("regist") || alt.includes("登録") || onclick.includes("regist")) {
+            img.click();
+            return alt || src.split("/").pop() || "img-register";
+          }
+        }
+        return null;
+      });
+
+      if (!regClicked) {
+        console.log("[forrent] 確認画面の登録ボタンが見つかりません");
+        return {
+          saved: false,
+          registrationType: null,
+          score: validation.score,
+          error: "確認画面の登録ボタンが見つかりません",
+        };
+      }
+
+      console.log(`[forrent] 登録ボタンクリック: ${regClicked}`);
+      await confirmFrame.waitForTimeout(10000);
+
+      // ── 登録完了確認 ──
+      const finalFrame = page.frame({ name: "main" }) || confirmFrame;
+      const result = await finalFrame.evaluate(() => {
+        const body = document.body?.innerText || "";
+        const scoreMatch = body.match(/名寄せスコア[：:\s]*(\d+)/);
+        const isComplete = body.includes("完了") || body.includes("登録しました");
+        return { isComplete, score: scoreMatch ? parseInt(scoreMatch[1]) : null, bodySnippet: body.slice(0, 200) };
+      });
+
+      const finalScore = result.score || validation.score;
+      console.log(`[forrent] === REGISTER END === 登録完了 (score: ${finalScore}, complete: ${result.isComplete})`);
+      return {
+        saved: true,
+        registrationType: "登録済み",
+        score: finalScore,
+        dialogs,
+        errors: [],
+      };
     }
   } catch (e) {
     console.log(`[forrent] 登録エラー: ${e.message}`);

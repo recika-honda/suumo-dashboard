@@ -64,7 +64,7 @@ async function captureMapScreenshot(page, address, outputDir) {
 
     return {
       localPath: outputPath,
-      categoryId: "14",
+      categoryId: "SH",
       categoryLabel: "周辺環境",
     };
   } catch (err) {

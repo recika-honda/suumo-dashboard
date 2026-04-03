@@ -535,14 +535,14 @@ async function extractInitialCostsFromPage(page) {
  */
 function checkImageSufficiency(processedImages) {
   const HIGH_VALUE_CATS = ["01", "02", "03", "04", "05"];
-  const ALL_CATS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14"];
+  const ALL_CATS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21"];
   const presentCats = new Set(processedImages.map(img => img.categoryId).filter(Boolean));
 
   const missing5pt = HIGH_VALUE_CATS.filter(cat => !presentCats.has(cat));
   const missing1pt = ALL_CATS.filter(cat => !presentCats.has(cat) && !HIGH_VALUE_CATS.includes(cat));
 
-  // 不足判定: 5ptカテゴリが欠けている OR 全体の画像数が少ない（1ptカテゴリ大量不足）
-  const insufficient = missing5pt.length > 0 || (processedImages.length < 10 && missing1pt.length >= 3);
+  // 不足判定: 5ptカテゴリが欠けている OR 全体の画像数が少ない（16カテゴリ中5以上欠落）
+  const insufficient = missing5pt.length > 0 || (processedImages.length < 10 && missing1pt.length >= 5);
 
   return {
     insufficient,

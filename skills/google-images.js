@@ -41,6 +41,7 @@ const BRAND_LOGOS = {
   "セイムス": "seims.png", "SEIMS": "seims.png",
   "パルケ": "parque.png", "Parque": "parque.png",
   "信濃屋": "shinanoya.png",
+  "スーパーバリュー": "super-value.png", "SuperValue": "super-value.png",
   // ドラッグストア
   "マツモトキヨシ": "matsukiyo.png", "マツキヨ": "matsukiyo.png",
   "スギ薬局": "sugi-pharmercy.png",
@@ -48,6 +49,7 @@ const BRAND_LOGOS = {
   "ツルハ": "tsuruha.png", "ツルハドラッグ": "tsuruha.png",
   "サンドラッグ": "sundrug.png",
   "ココカラファイン": "cococala-fine.png",
+  "トモズ": "tomods.png", "Tomod's": "tomods.png",
   // 郵便局
   "郵便局": "japan-post.png", "日本郵便": "japan-post.png",
 };

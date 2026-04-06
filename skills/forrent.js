@@ -466,6 +466,12 @@ async function fillPropertyForm(mainFrame, reinsData, initialCostData = null) {
       }
       if (addr3) ok("番地", await fillById(mainFrame, "banchiNm", addr3, "番地"));
     }
+
+    // 番地が未設定の場合（新築等で番地未確定）→ ハイフンをデフォルト設定
+    const banchiVal = await mainFrame.evaluate(() => document.getElementById("banchiNm")?.value || "");
+    if (!banchiVal.trim()) {
+      ok("番地", await fillById(mainFrame, "banchiNm", "-", "番地(デフォルト)"));
+    }
   }
 
   // ═══ 3. 会社間流通チェックボックス OFF ═══
@@ -501,29 +507,38 @@ async function fillPropertyForm(mainFrame, reinsData, initialCostData = null) {
     ok("面積(小数)", await fillById(mainFrame, "mensekiDecimalInput", parts[1] || "00", "面積(小数)"));
   }
 
-  // ═══ 6. 入居時期 ═══
-  // nyukyoKbnCd1(即=1), nyukyoKbnCd2(相談=2), nyukyoKbnCd3(年月=3)
-  // nyukyoNen/nyukyoTsuki: 年月指定時のテキスト入力
+  // ═══ 6. 入居時期（状況区分） ═══
+  // nyukyoKbnCd1(即=1), nyukyoKbnCd2(相談=2), nyukyoKbnCd3(年月指定=3)
+  // evaluate で直接設定 + onclick ハンドラ発火（frame内 click() が不安定なため）
   {
     const nyukyo = norm(reinsData.入居時期 || "");
+    let nyukyoId = "nyukyoKbnCd2"; // default: 相談
     if (/即/.test(nyukyo)) {
-      await mainFrame.click("#nyukyoKbnCd1").catch(() => {});
-      ok("入居時期", true);
+      nyukyoId = "nyukyoKbnCd1";
     } else {
-      // 年月パターン抽出: "2026年3月" や "令和8年3月"
       const ymMatch = nyukyo.match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
       if (ymMatch) {
-        await mainFrame.click("#nyukyoKbnCd3").catch(() => {});
+        nyukyoId = "nyukyoKbnCd3";
         await mainFrame.waitForTimeout(300);
         await fillByName(mainFrame, `${S}nyukyoNen}`, ymMatch[1], "入居年");
         await fillByName(mainFrame, `${S}nyukyoTsuki}`, ymMatch[2], "入居月");
-        ok("入居時期", true);
-      } else {
-        // "相談", "期日指定", 未取得, その他 → 相談にフォールバック
-        await mainFrame.click("#nyukyoKbnCd2").catch(() => {});
-        ok("入居時期", true);
       }
     }
+    const nyukyoResult = await mainFrame.evaluate((id) => {
+      const radio = document.getElementById(id);
+      if (!radio) return false;
+      radio.checked = true;
+      radio.dispatchEvent(new Event("change", { bubbles: true }));
+      // Fire onclick handler directly (doVisible etc.)
+      if (radio.onclick) radio.onclick();
+      else if (radio.getAttribute("onclick")) {
+        try { new Function(radio.getAttribute("onclick")).call(radio); } catch {}
+      }
+      return true;
+    }, nyukyoId);
+    ok("入居時期", nyukyoResult);
+    if (nyukyoResult) console.log(`[forrent] + 入居時期: ${nyukyoId} (${nyukyo || "相談"})`);
+    else console.log(`[forrent] x 入居時期: ${nyukyoId} 設定失敗`);
     await mainFrame.waitForTimeout(300);
   }
 

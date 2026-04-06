@@ -1123,22 +1123,62 @@ async function fillTransportViaMap(page, mainFrame, transportArray) {
       console.log(`[forrent] 座標セット: ido=${coordResult.ido}, keido=${coordResult.keido} (${coordResult.source})`);
     } else {
       console.log("[forrent] 座標取得失敗 → フォールバック");
-      return fillTransportDirect(mainFrame, transportArray);
+      return fillTransportCascade(mainFrame, transportArray);
     }
 
   } catch (e) {
     console.log(`[forrent] 地図修正エラー: ${e.message.slice(0, 100)}`);
-    return fillTransportDirect(mainFrame, transportArray);
+    return fillTransportCascade(mainFrame, transportArray);
   }
 
   // ═══ Step 2: らくらく交通入力 ═══
   try {
     console.log("[forrent] Step 2: らくらく交通入力（rakurakuKotsu）");
 
-    const transportPopupPromise = page.context().waitForEvent("page", { timeout: 15000 }).catch(() => null);
-    await mainFrame.evaluate(() => {
+    // ボタン存在確認 + onclick内容をログ
+    const btnInfo = await mainFrame.evaluate(() => {
       const btn = document.getElementById("rakurakuKotsu");
-      if (btn) btn.click();
+      if (!btn) return { exists: false };
+      return {
+        exists: true,
+        disabled: btn.disabled,
+        display: getComputedStyle(btn).display,
+        onclick: btn.getAttribute("onclick") || btn.onclick?.toString()?.slice(0, 200) || "",
+        tagName: btn.tagName,
+      };
+    });
+    console.log(`[forrent] rakurakuKotsu: ${JSON.stringify(btnInfo)}`);
+
+    if (!btnInfo.exists) {
+      console.log("[forrent] rakurakuKotsuボタンが存在しない → フォールバック");
+      return fillTransportCascade(mainFrame, transportArray);
+    }
+
+    // ボタンがdisabledの場合: 強制有効化 + openRakurakuKotsu() を直接呼び出し
+    if (btnInfo.disabled) {
+      console.log("[forrent] rakurakuKotsu disabled → 強制有効化して直接呼び出し");
+      await mainFrame.evaluate(() => {
+        const btn = document.getElementById("rakurakuKotsu");
+        if (btn) btn.disabled = false;
+      });
+      await mainFrame.waitForTimeout(500);
+    }
+
+    // popup検出: context-level + page-level 両方で捕捉
+    const transportPopupPromise = Promise.race([
+      page.waitForEvent("popup", { timeout: 15000 }).catch(() => null),
+      page.context().waitForEvent("page", { timeout: 15000 }).catch(() => null),
+    ]);
+
+    // onclick関数を直接呼び出し（disabled状態でもclickイベント不発火のため）
+    await mainFrame.evaluate(() => {
+      if (typeof openRakurakuKotsu === "function") {
+        const flg = document.getElementById("rakurakuKotsuCacheFlg")?.value || "";
+        openRakurakuKotsu(flg, "COM1R02161.action", "COM1R02167.action");
+      } else {
+        const btn = document.getElementById("rakurakuKotsu");
+        if (btn) btn.click();
+      }
     });
 
     const transportPopup = await transportPopupPromise;
@@ -1246,83 +1286,210 @@ async function fillTransportViaMap(page, mainFrame, transportArray) {
 
       if (filled.length === 0) {
         console.log("[forrent] らくらく交通入力 結果なし → フォールバック");
-        return fillTransportDirect(mainFrame, transportArray);
+        return fillTransportCascade(mainFrame, transportArray);
       }
 
     } else {
       console.log("[forrent] 交通ポップアップなし → フォールバック");
-      return fillTransportDirect(mainFrame, transportArray);
+      return fillTransportCascade(mainFrame, transportArray);
     }
 
   } catch (e) {
     console.log(`[forrent] らくらく交通入力エラー: ${e.message.slice(0, 100)}`);
-    return fillTransportDirect(mainFrame, transportArray);
+    return fillTransportCascade(mainFrame, transportArray);
   }
 
   console.log(`[forrent] transport via map: ${filled.length} filled, ${errors.length} errors`);
   return { filled, errors };
 }
 
-// evaluate直入力フォールバック
-async function fillTransportDirect(mainFrame, transportArray) {
+// cascade select フォールバック: 沿線select→駅select→徒歩分数を正しくコード設定
+async function fillTransportCascade(mainFrame, transportArray) {
   const filled = [];
   const errors = [];
   if (!transportArray?.length) return { filled, errors };
 
-  const slots = [
-    { ensen: "pkgEnsenNmDisp",  eki: "pkgEkiNmDisp",  radio: "toho",  fun: "tohofun",
-      ensenNm: "pkgEnsenNm", ekiNm: "pkgEkiNm" },
-    { ensen: "pkgEnsenNmDisp2", eki: "pkgEkiNmDisp2", radio: "toho2", fun: "tohofun2",
-      ensenNm: "pkgEnsenNm2", ekiNm: "pkgEkiNm2" },
-    { ensen: "pkgEnsenNmDisp3", eki: "pkgEkiNmDisp3", radio: "toho3", fun: "tohofun3",
-      ensenNm: "pkgEnsenNm3", ekiNm: "pkgEkiNm3" },
-  ];
+  // forrent.jpの交通フィールド構造を自動検出
+  const formInfo = await mainFrame.evaluate(() => {
+    const info = {};
+    // cascade select 方式 (select要素)
+    const ensenSel1 = document.querySelector('select[name*="ensenCd1"], select[name*="ensenCd"][name$="1"]');
+    info.hasCascadeSelects = !!ensenSel1;
+    if (ensenSel1) {
+      info.ensenSelName = ensenSel1.name;
+      info.ensenOptCount = ensenSel1.options.length;
+    }
+    // hidden field 方式 (pkgEnsenCd)
+    const pkgEnsen = document.getElementById("pkgEnsenCd");
+    info.hasHiddenFields = !!pkgEnsen;
+    // display field 方式
+    const pkgDisp = document.getElementById("pkgEnsenNmDisp");
+    info.hasDisplayFields = !!pkgDisp;
+    return info;
+  });
+  console.log(`[forrent] transport form info: ${JSON.stringify(formInfo)}`);
 
   for (let i = 0; i < Math.min(transportArray.length, 3); i++) {
     const t = transportArray[i];
-    const slot = slots[i];
     const ensen = norm(t.沿線 || "");
     const eki = norm(t.駅 || "");
     const walk = String(parseInt(t.徒歩) || 0);
+    if (!ensen || !eki) continue;
+
+    const suffix = i === 0 ? "" : String(i + 1);
+    const idx1 = i + 1; // 1-based for name attributes
 
     try {
-      const result = await mainFrame.evaluate(({ slot, ensen, eki, walk }) => {
+      // === Method 1: cascade select (最も確実) ===
+      const ensenOk = await mainFrame.evaluate(({ ensen, idx }) => {
+        // Try multiple naming patterns for ensen select
+        const patterns = [
+          `select[name*="ensenCd${idx}"]`,
+          `select[name*="ensenCd"][name$="${idx}"]`,
+          `select[name$="kotsuInputForm[${idx - 1}].ensenCd"]`,
+          `select[name*="kotsuInputForm"][name*="[${idx - 1}]"][name*="ensenCd"]`,
+        ];
+        let sel = null;
+        for (const p of patterns) {
+          sel = document.querySelector(p);
+          if (sel && sel.options.length > 1) break;
+        }
+        if (!sel) return { ok: false, reason: "select not found" };
+
+        // Partial match on option text
+        const options = [...sel.options];
+        const match = options.find(o => o.text === ensen)
+          || options.find(o => o.text.includes(ensen))
+          || options.find(o => ensen.includes(o.text.replace(/（.*）/, "").trim()));
+        if (!match) return { ok: false, reason: `no match for "${ensen}" in ${options.length} options` };
+
+        sel.value = match.value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+        return { ok: true, code: match.value, text: match.text };
+      }, { ensen, idx: idx1 });
+
+      if (ensenOk.ok) {
+        console.log(`[forrent] transport(cascade) ${idx1}: 沿線=${ensenOk.text} code=${ensenOk.code}`);
+
+        // Wait for station cascade to load
+        await mainFrame.waitForTimeout(2500);
+
+        // Select station
+        const ekiOk = await mainFrame.evaluate(({ eki, idx }) => {
+          const patterns = [
+            `select[name*="ekiCd${idx}"]`,
+            `select[name*="ekiCd"][name$="${idx}"]`,
+            `select[name$="kotsuInputForm[${idx - 1}].ekiCd"]`,
+            `select[name*="kotsuInputForm"][name*="[${idx - 1}]"][name*="ekiCd"]`,
+          ];
+          let sel = null;
+          for (const p of patterns) {
+            sel = document.querySelector(p);
+            if (sel && sel.options.length > 1) break;
+          }
+          if (!sel) return { ok: false, reason: "select not found" };
+
+          const options = [...sel.options];
+          const match = options.find(o => o.text === eki)
+            || options.find(o => o.text.includes(eki))
+            || options.find(o => eki.includes(o.text.replace(/（.*）/, "").trim()));
+          if (!match) return { ok: false, reason: `no match for "${eki}" in ${options.length} options`, available: options.slice(0, 10).map(o => o.text) };
+
+          sel.value = match.value;
+          sel.dispatchEvent(new Event("change", { bubbles: true }));
+          return { ok: true, code: match.value, text: match.text };
+        }, { eki, idx: idx1 });
+
+        if (ekiOk.ok) {
+          console.log(`[forrent] transport(cascade) ${idx1}: 駅=${ekiOk.text} code=${ekiOk.code}`);
+        } else {
+          console.log(`[forrent] transport(cascade) ${idx1}: 駅失敗: ${ekiOk.reason}`);
+          errors.push(`交通${idx1} 駅: ${ekiOk.reason}`);
+        }
+
+        // 徒歩分数
+        await mainFrame.evaluate(({ idx, walk }) => {
+          const patterns = [
+            `input[name*="tohoFun${idx}"]`,
+            `input[name*="kotsuInputForm"][name*="[${idx - 1}]"][name*="tohoFun"]`,
+          ];
+          for (const p of patterns) {
+            const el = document.querySelector(p);
+            if (el) {
+              el.value = walk;
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+              return;
+            }
+          }
+          // fallback: tohofun by ID
+          const funEl = document.getElementById(idx === 1 ? "tohofun" : `tohofun${idx}`);
+          if (funEl) {
+            funEl.value = walk;
+            funEl.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        }, { idx: idx1, walk });
+
+        // 徒歩ラジオボタン
+        await mainFrame.evaluate(({ idx }) => {
+          const radioId = idx === 1 ? "toho" : `toho${idx}`;
+          const radioEl = document.getElementById(radioId);
+          if (radioEl) {
+            radioEl.checked = true;
+            radioEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }, { idx: idx1 });
+
+        filled.push(`交通${idx1}: ${eki}駅 徒歩${walk}分 (cascade)`);
+        await mainFrame.waitForTimeout(500);
+        continue; // cascade success, skip to next
+      }
+
+      // === Method 2: hidden field + display field (ポップアップ互換) ===
+      console.log(`[forrent] transport(cascade) ${idx1}: 沿線select失敗(${ensenOk.reason}) → hidden field方式`);
+      const hiddenResult = await mainFrame.evaluate(({ suffix, ensen, eki, walk }) => {
         const out = [];
         const fire = (el) => {
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
         };
-        const ensenEl = document.getElementById(slot.ensen);
-        if (ensenEl) { ensenEl.value = ensen; fire(ensenEl); out.push(`沿線=${ensen}`); }
-        const ensenNmEl = document.getElementById(slot.ensenNm);
-        if (ensenNmEl) { ensenNmEl.value = ensen; }
-        const ekiEl = document.getElementById(slot.eki);
-        if (ekiEl) { ekiEl.value = eki; fire(ekiEl); out.push(`駅=${eki}`); }
-        const ekiNmEl = document.getElementById(slot.ekiNm);
-        if (ekiNmEl) { ekiNmEl.value = eki; }
-        const radioEl = document.getElementById(slot.radio);
-        if (radioEl) { radioEl.checked = true; fire(radioEl); out.push("徒歩=checked"); }
-        const funEl = document.getElementById(slot.fun);
-        if (funEl && walk !== "0") { funEl.value = walk; fire(funEl); out.push(`分数=${walk}`); }
+        // Display fields
+        const dispEnsen = document.getElementById(`pkgEnsenNmDisp${suffix}`);
+        if (dispEnsen) { dispEnsen.value = ensen; fire(dispEnsen); }
+        const nmEnsen = document.getElementById(`pkgEnsenNm${suffix}`);
+        if (nmEnsen) { nmEnsen.value = ensen; }
+        const dispEki = document.getElementById(`pkgEkiNmDisp${suffix}`);
+        if (dispEki) { dispEki.value = eki; fire(dispEki); }
+        const nmEki = document.getElementById(`pkgEkiNm${suffix}`);
+        if (nmEki) { nmEki.value = eki; }
+        // Radio
+        const radioId = suffix === "" ? "toho" : `toho${suffix}`;
+        const radio = document.getElementById(radioId);
+        if (radio) { radio.checked = true; fire(radio); }
+        // Minutes
+        const funId = suffix === "" ? "tohofun" : `tohofun${suffix}`;
+        const funEl = document.getElementById(funId);
+        if (funEl && walk !== "0") { funEl.value = walk; fire(funEl); }
+        out.push(`display=${!!dispEnsen}, hidden=${!!nmEnsen}`);
         return out;
-      }, { slot, ensen, eki, walk });
+      }, { suffix, ensen, eki, walk });
 
-      if (result.length > 0) {
-        filled.push(`交通${i + 1}: ${eki}駅 徒歩${walk}分`);
-        console.log(`[forrent] transport(fallback) ${i + 1}: ${result.join(", ")}`);
-      }
+      filled.push(`交通${idx1}: ${eki}駅 徒歩${walk}分 (hidden)`);
+      console.log(`[forrent] transport(hidden) ${idx1}: ${hiddenResult.join(", ")}`);
+
     } catch (e) {
-      errors.push(`交通${i + 1}: ${e.message.slice(0, 80)}`);
+      errors.push(`交通${idx1}: ${e.message.slice(0, 80)}`);
+      console.log(`[forrent] transport(cascade) ${idx1}: error: ${e.message.slice(0, 100)}`);
     }
   }
 
-  console.log(`[forrent] transport(fallback): ${filled.length} filled, ${errors.length} errors`);
+  console.log(`[forrent] transport(cascade): ${filled.length} filled, ${errors.length} errors`);
   return { filled, errors };
 }
 
 // 旧ポップアップ版（互換性のため残す）
 async function fillTransportRakuraku(mainFrame, transportArray) {
-  return fillTransportDirect(mainFrame, transportArray);
+  return fillTransportCascade(mainFrame, transportArray);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2627,7 +2794,7 @@ module.exports = {
   navigateToNewProperty,
   fillPropertyForm,
   fillTransportViaMap,
-  fillTransportDirect,
+  fillTransportCascade,
   fillTransportRakuraku,
   fillTexts,
   uploadImages,

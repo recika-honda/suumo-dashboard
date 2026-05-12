@@ -4,7 +4,7 @@
  *
  * Notion DBから Status="広告待ち" の物件を取得し、
  * REINS → forrent.jp の入稿パイプラインを実行。
- * 成功時は Status を "登録済み" に更新。
+ * 成功時は Status を "掲載保留" に更新 (forrent側は shijiIsize=3=保留 で登録)。
  *
  * Usage:
  *   bun run scripts/batch-nyuko.js           # 広告待ち物件を処理
@@ -30,6 +30,7 @@ const { analyzeAndCropImages } = require("../skills/image-ai");
 const { generateTexts } = require("../skills/text-ai");
 const { checkImageSufficiency, fetchBukakuData } = require("../skills/bukaku");
 const { fetchShuhenPhotos } = require("../skills/google-images");
+const slack = require("../skills/slack");
 
 const notion = new NotionClient({ auth: process.env.NOTION_TOKEN });
 const DB_ID = process.env.NOTION_DATABASE_ID;
@@ -37,6 +38,77 @@ const DB_ID = process.env.NOTION_DATABASE_ID;
 const MAX_LOGIN_RETRIES = 3;
 const PROPERTY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes per property
 const dryRun = process.argv.includes("--dry-run");
+
+// ── Run artifact / history logging ───────────────────────
+const LOGS_DIR = path.join(__dirname, "..", "logs");
+const RUNS_DIR = path.join(LOGS_DIR, "runs");
+const HISTORY_PATH = path.join(LOGS_DIR, "nyuko-history.jsonl");
+
+function nowTsCompact() {
+  const d = new Date();
+  const jst = new Date(d.getTime() + 9 * 3600 * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${jst.getUTCFullYear()}${pad(jst.getUTCMonth() + 1)}${pad(jst.getUTCDate())}-${pad(jst.getUTCHours())}${pad(jst.getUTCMinutes())}${pad(jst.getUTCSeconds())}`;
+}
+
+function createRunLog(reinsId) {
+  const ts = nowTsCompact();
+  const dir = path.join(RUNS_DIR, `${ts}_${reinsId}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const startedAt = new Date().toISOString();
+  const steps = [];
+  const data = { reinsId, startedAt, steps, status: null };
+
+  const writeRunJson = () => {
+    try {
+      fs.writeFileSync(path.join(dir, "run.json"), JSON.stringify(data, null, 2));
+    } catch (e) {
+      console.error(`[runlog] write failed: ${e.message}`);
+    }
+  };
+
+  const step = (name, extra = {}) => {
+    const entry = { name, at: new Date().toISOString(), ...extra };
+    steps.push(entry);
+    writeRunJson();
+    return entry;
+  };
+
+  const finish = (summary) => {
+    Object.assign(data, summary, { finishedAt: new Date().toISOString() });
+    writeRunJson();
+    try {
+      fs.mkdirSync(LOGS_DIR, { recursive: true });
+      const hist = {
+        ts: data.finishedAt,
+        reinsId,
+        propertyName: data.propertyName || null,
+        status: data.status,
+        score: data.score || null,
+        duration: data.duration || null,
+        errorsCount: Array.isArray(data.errors) ? data.errors.length : 0,
+        firstError: Array.isArray(data.errors) && data.errors.length ? data.errors[0] : null,
+        runDir: dir,
+      };
+      fs.appendFileSync(HISTORY_PATH, JSON.stringify(hist) + "\n");
+    } catch (e) {
+      console.error(`[runlog] history append failed: ${e.message}`);
+    }
+  };
+
+  return { dir, data, step, finish };
+}
+
+// ── Browser launch options ──────────────────────────────
+// デフォルト headless。NYUKO_HEADED=1 を立てれば画面表示（デバッグ用）。
+const HEADLESS = process.env.NYUKO_HEADED !== "1";
+const LAUNCH_OPTS = {
+  headless: HEADLESS,
+  args: [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=IsolateOrigins,site-per-process",
+  ],
+};
 
 // ── Notion: fetch properties with Status = "広告待ち" ────
 async function fetchPendingProperties() {
@@ -92,7 +164,7 @@ async function loginReins(page) {
 }
 
 // ── Process single property (full pipeline) ──────────────
-async function processProperty(context, reinsPage, reinsId, index, total) {
+async function processProperty(context, reinsPage, reinsId, index, total, runLog) {
   const downloadDir = path.join(os.homedir(), "Desktop", "suumo-nyuko", reinsId);
   fs.mkdirSync(downloadDir, { recursive: true });
 
@@ -100,6 +172,8 @@ async function processProperty(context, reinsPage, reinsId, index, total) {
   console.error(`\n${"━".repeat(50)}`);
   console.error(`  ${label}`);
   console.error(`${"━".repeat(50)}`);
+
+  const logStep = runLog ? runLog.step : () => {};
 
   // ── Step 1: REINS data extraction ──
   if (index > 0) {
@@ -111,20 +185,60 @@ async function processProperty(context, reinsPage, reinsId, index, total) {
   }
 
   console.error("  [1/6] REINS検索...");
+  logStep("reins_search_start");
   const found = await reins.searchByNumber(reinsPage, reinsId);
   if (!found) {
     console.error("  -> 物件が見つかりませんでした");
+    logStep("reins_search_not_found");
     return { reinsId, status: "NOT_FOUND", propertyName: "N/A" };
   }
 
   const reinsData = await reins.extractPropertyData(reinsPage);
   console.error(`  物件名: ${reinsData.建物名}`);
+  logStep("reins_extracted", { propertyName: reinsData.建物名, fieldCount: Object.keys(reinsData).length });
+  if (runLog) {
+    runLog.data.propertyName = reinsData.建物名;
+    try {
+      fs.writeFileSync(path.join(runLog.dir, "reins-data.json"), JSON.stringify(reinsData, null, 2));
+    } catch {}
+  }
+
+  // ── 早期バリデーション: forrent.jp 必須項目欠落のショートサーキット ──
+
+  // 物件名 (建物名) は全物件種目で forrent サーバ側必須。空ならば即 REG_FAIL。
+  // (再現済み: 100139015499 — REINS 抽出で建物名 None / forrent「物件名を入力して下さい」)
+  const buildingName = reinsData.建物名 ? String(reinsData.建物名).trim() : "";
+  if (!buildingName) {
+    console.error("  -> 建物名未取得（forrent必須） → REG_FAIL早期確定");
+    logStep("missing_required_field", { field: "建物名", 物件種目: reinsData.物件種目 });
+    return {
+      reinsId,
+      status: "REG_FAIL",
+      propertyName: reinsId,
+      reason: "REINSデータに建物名がありません",
+    };
+  }
+
+  // 部屋番号は マンション/アパート で forrent サーバ側必須。REINS から取れていない場合、
+  // 画像取得・AI 分類・ブラウザ起動を一切行わず REG_FAIL として入稿失敗に流す。
+  const requiresHeyaNo = ["マンション", "アパート"].includes(reinsData.物件種目);
+  if (requiresHeyaNo && !reinsData.部屋番号) {
+    console.error("  -> 部屋番号未取得（forrent必須） → REG_FAIL早期確定");
+    logStep("missing_required_field", { field: "部屋番号", 物件種目: reinsData.物件種目 });
+    return {
+      reinsId,
+      status: "REG_FAIL",
+      propertyName: reinsData.建物名,
+      reason: "REINSデータに部屋番号がありません",
+    };
+  }
 
   // ── Step 2: Images ──
   console.error("  [2/6] 画像スクリーンショット...");
   const imagesMeta = await reins.extractImageData(reinsPage);
   const downloaded = await reins.screenshotAllImages(reinsPage, imagesMeta, downloadDir);
   console.error(`  ${downloaded.length}枚取得`);
+  logStep("images_downloaded", { count: downloaded.length });
 
   // ── Step 3: AI image classification + bukaku + shuhen ──
   console.error("  [3/6] AI画像分類...");
@@ -137,6 +251,7 @@ async function processProperty(context, reinsPage, reinsId, index, total) {
 
   let processedImages = await analyzeAndCropImages(downloaded, downloadDir);
   console.error(`  ${processedImages.length}枚分類完了`);
+  logStep("images_classified", { count: processedImages.length });
 
   // Bukaku supplementary images
   const bukakuResult = await bukakuDataPromise;
@@ -162,7 +277,7 @@ async function processProperty(context, reinsPage, reinsId, index, total) {
   console.error("  [3.5/6] 周辺環境写真取得...");
   let shuhenBrowser;
   try {
-    shuhenBrowser = await chromium.launch({ headless: false });
+    shuhenBrowser = await chromium.launch(LAUNCH_OPTS);
     const shuhenContext = await shuhenBrowser.newContext({ viewport: { width: 1280, height: 900 } });
     const shuhenPhotos = await fetchShuhenPhotos(shuhenContext, reinsData, downloadDir);
     if (shuhenPhotos.length > 0) {
@@ -188,6 +303,7 @@ async function processProperty(context, reinsPage, reinsId, index, total) {
   console.error("  [4/6] AIテキスト生成...");
   const texts = await generateTexts(reinsData);
   console.error(`  キャッチ: "${texts.catchCopy}"`);
+  logStep("texts_generated", { catchCopy: texts.catchCopy, hasFreeComment: !!texts.freeComment });
 
   // ── Step 5: forrent.jp submission ──
   console.error("  [5/6] forrent.jp入稿...");
@@ -258,20 +374,40 @@ async function processProperty(context, reinsPage, reinsId, index, total) {
     console.error(
       `  入力: ${Object.keys(filled).length}件, 画像: ${uploaded.length}枚, 交通: ${transportResult.filled.length}件, 周辺: ${shuhenResult.filled.length}件`
     );
+    logStep("form_filled", {
+      filledFields: Object.keys(filled).length,
+      uploadedImages: uploaded.length,
+      transport: transportResult.filled.length,
+      shuhen: shuhenResult.filled.length,
+      formFillErrors: allErrors.length,
+    });
 
     // ── Step 6: Register (actual save) ──
     console.error("  [6/6] 登録...");
     let regResult = { saved: false, registrationType: null };
     try {
-      regResult = await forrent.registerProperty(forrentPage, mainFrame);
+      regResult = await forrent.registerProperty(forrentPage, mainFrame, {
+        artifactDir: runLog ? runLog.dir : undefined,
+      });
       if (regResult.saved) {
         const scoreText = regResult.score ? ` (${regResult.score}pt/43pt)` : "";
         console.error(`  -> ${regResult.registrationType}完了${scoreText}`);
+        logStep("register_success", { score: regResult.score });
       } else {
-        console.error(`  -> 登録失敗: ${regResult.error || "不明"}`);
+        const firstErr = (regResult.errors || [])[0] || regResult.error || "不明";
+        console.error(`  -> 登録失敗: ${firstErr}`);
+        if (regResult.errors && regResult.errors.length) {
+          for (const e of regResult.errors.slice(0, 8)) console.error(`       - ${e}`);
+        }
+        logStep("register_failed", {
+          error: regResult.error || null,
+          errors: regResult.errors || [],
+          score: regResult.score || null,
+        });
       }
     } catch (e) {
       console.error(`  -> 登録エラー: ${e.message.slice(0, 100)}`);
+      logStep("register_exception", { error: e.message.slice(0, 300) });
     }
 
     await forrentPage.close();
@@ -286,10 +422,12 @@ async function processProperty(context, reinsPage, reinsId, index, total) {
       uploadedImages: uploaded.length,
       transport: transportResult.filled.length,
       shuhen: shuhenResult.filled.length,
-      errors: allErrors.length,
+      errors: regResult.errors || [],
+      formFillErrors: allErrors.length,
     };
   } catch (err) {
     console.error(`  -> エラー: ${err.message.slice(0, 150)}`);
+    logStep("pipeline_exception", { error: err.message.slice(0, 300) });
     try {
       await forrentPage.close();
     } catch {}
@@ -329,7 +467,7 @@ async function main() {
   }
 
   // 2. Launch browser & login to REINS
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch(LAUNCH_OPTS);
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const reinsPage = await context.newPage();
 
@@ -357,12 +495,13 @@ async function main() {
   for (let i = 0; i < pending.length; i++) {
     const { pageId, reinsId } = pending[i];
     const startTime = Date.now();
+    const runLog = createRunLog(reinsId);
 
     let result;
     try {
       // Per-property timeout
       result = await Promise.race([
-        processProperty(context, reinsPage, reinsId, i, pending.length),
+        processProperty(context, reinsPage, reinsId, i, pending.length, runLog),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error("タイムアウト（15分）")), PROPERTY_TIMEOUT_MS)
         ),
@@ -377,19 +516,65 @@ async function main() {
     }
 
     result.duration = Math.round((Date.now() - startTime) / 1000);
+    result.runDir = runLog.dir;
+    runLog.finish({
+      status: result.status,
+      propertyName: result.propertyName,
+      score: result.score || null,
+      duration: result.duration,
+      errors: result.errors || (result.error ? [result.error] : []),
+      registrationType: result.registrationType || null,
+    });
 
-    // Update Notion status on success
+    // Update Notion status + notify Slack on success
     if (result.status === "SUCCESS") {
       try {
-        await updateNotionStatus(pageId, "登録済み");
-        console.error(`  [notion] Status → 登録済み`);
+        await updateNotionStatus(pageId, "掲載保留");
+        console.error(`  [notion] Status → 掲載保留`);
         succeeded++;
       } catch (e) {
         console.error(`  [notion] Status更新失敗: ${e.message}`);
         result.notionUpdateFailed = true;
       }
+
+      try {
+        const r = await slack.notifyNyukoSuccess({
+          reinsId: result.reinsId,
+          propertyName: result.propertyName,
+          score: result.score,
+          registrationType: result.registrationType,
+        });
+        if (r.ok) console.error(`  [slack] DM送信 → 大木さん`);
+      } catch (e) {
+        console.error(`  [slack] DM送信失敗: ${e.message}`);
+      }
     } else {
       failed++;
+
+      // データ系失敗は「入稿失敗」にフリップして retry loop を止める。
+      //  - REG_FAIL (バリデーションで蹴られた)
+      //  - NOT_FOUND (REINS で該当物件なし)
+      // 以下は transient とみなし、広告待ちのまま次サイクルで再試行:
+      //  - TIMEOUT, ERROR, FORRENT_LOGIN_FAIL
+      const dataLevelFailure = result.status === "REG_FAIL" || result.status === "NOT_FOUND";
+      if (dataLevelFailure) {
+        try {
+          await updateNotionStatus(pageId, "入稿失敗");
+          console.error(`  [notion] Status → 入稿失敗 (${result.status})`);
+        } catch (e) {
+          console.error(`  [notion] Status更新失敗: ${e.message}`);
+        }
+      }
+
+      try {
+        await slack.notifyError({
+          reinsId: result.reinsId,
+          propertyName: result.propertyName,
+          error: result.error || result.status,
+        });
+      } catch (e) {
+        console.error(`  [slack] エラー通知失敗: ${e.message}`);
+      }
     }
 
     results.push(result);
@@ -417,14 +602,19 @@ async function main() {
   console.error("═".repeat(50));
 }
 
-main().catch(async (err) => {
-  const report = {
-    processed: 0,
-    succeeded: 0,
-    failed: 0,
-    error: err.message,
-    results: [],
-  };
-  console.log(JSON.stringify(report));
-  process.exit(1);
-});
+// main gate: require() 時に勝手に走らないようにする
+if (require.main === module) {
+  main().catch(async (err) => {
+    const report = {
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+      error: err.message,
+      results: [],
+    };
+    console.log(JSON.stringify(report));
+    process.exit(1);
+  });
+}
+
+module.exports = { processProperty, createRunLog };

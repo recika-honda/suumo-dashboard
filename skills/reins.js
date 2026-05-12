@@ -74,12 +74,66 @@ async function login(page, credentials) {
   await page.click(REINS_SELECTORS.login.submitBtn);
   await page.waitForTimeout(5000);
 
+  // ログイン後に告知/メンテ/セッション競合のモーダルが表示されると、
+  // ダッシュボードの「物件番号検索」ボタンが visible/enabled/stable に
+  // 到達せず click TIMEOUT になる。ベストエフォートで dismiss する。
+  await dismissDashboardOverlays(page);
+
   return page.url().includes("GKG003100");
+}
+
+// ログイン後に出現しうるダイアログ/告知バナーを最大 5s ベストエフォートで閉じる。
+// 既知パターン (お知らせモーダルの×ボタン / OK / 閉じる / モーダル上の同意ボタン) を順に当てる。
+async function dismissDashboardOverlays(page) {
+  const candidates = [
+    'button:has-text("閉じる")',
+    'button:has-text("OK")',
+    'button:has-text("確認")',
+    'button:has-text("同意")',
+    'a:has-text("閉じる")',
+    'div.modal button[class*="close"]',
+    'div[class*="modal"] button[class*="close"]',
+    'button[aria-label="Close"]',
+    'button[aria-label="閉じる"]',
+  ];
+  const deadline = Date.now() + 5000;
+  for (const sel of candidates) {
+    if (Date.now() > deadline) break;
+    try {
+      const btn = await page.$(sel);
+      if (btn && (await btn.isVisible().catch(() => false))) {
+        await btn.click({ timeout: 1500 }).catch(() => {});
+        await page.waitForTimeout(300);
+      }
+    } catch {}
+  }
+  // 物件番号検索ボタンが visible になるまで最大 8s 待機（モーダル消えれば即返る）
+  try {
+    await page.waitForSelector(REINS_SELECTORS.dashboard.numberSearchBtn, {
+      state: "visible",
+      timeout: 8000,
+    });
+  } catch {}
 }
 
 // ── Search by Property Number ──────────────────────────────
 async function searchByNumber(page, reinsId) {
-  await page.click(REINS_SELECTORS.dashboard.numberSearchBtn);
+  // 物件番号検索ボタンがオーバーレイ等で stable にならないケースがあるため
+  // 1) overlay dismiss を試行 → 2) click の前に visible 待機 → 3) 失敗時は force click にフォールバック
+  await dismissDashboardOverlays(page).catch(() => {});
+  try {
+    await page.waitForSelector(REINS_SELECTORS.dashboard.numberSearchBtn, {
+      state: "visible",
+      timeout: 10000,
+    });
+    await page.click(REINS_SELECTORS.dashboard.numberSearchBtn, { timeout: 10000 });
+  } catch {
+    // 通常 click が timeout なら force click を試みる（element exists but not stable のケース対策）
+    await page.click(REINS_SELECTORS.dashboard.numberSearchBtn, {
+      force: true,
+      timeout: 5000,
+    });
+  }
   await page.waitForTimeout(3000);
 
   const inputs = await page.$$(REINS_SELECTORS.numberSearch.inputs);
@@ -189,6 +243,29 @@ async function extractPropertyData(page) {
         if (!LABELS.has(val)) {
           result[key] = val;
         }
+      }
+    }
+
+    // 部屋番号のサニタイズ — forrent.jp は「半角10桁以内」が上限。
+    // 1) 全角英数記号 → 半角に正規化（"８０１" → "801"）
+    // 2) 正規化後も半角英数記号に収まらない場合のみ破棄
+    //    （"その他所在地表示", "未定", "非公開" などのセンチネル文言は残り落とす）
+    if (result.部屋番号) {
+      const raw = result.部屋番号.trim();
+      // 全角 ASCII (！-～, 0xFF01-0xFF5E) → 半角, 全角スペース → 削除
+      const normalized = raw
+        .replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+        .replace(/[\u3000\s]+/g, "")
+        .trim();
+      const isValid = /^[\x21-\x7E]{1,10}$/.test(normalized);
+      if (isValid) {
+        if (normalized !== raw) {
+          console.log(`[reins] 部屋番号を正規化: "${raw}" → "${normalized}"`);
+        }
+        result.部屋番号 = normalized;
+      } else {
+        console.log(`[reins] 部屋番号の不正値を除外: "${raw}" (センチネル or フォーマット外)`);
+        delete result.部屋番号;
       }
     }
 
@@ -350,6 +427,112 @@ async function screenshotAllImages(page, imagesMeta, downloadDir) {
   return downloaded;
 }
 
+// ── Batch Search by Property Numbers (up to 20 at once) ────
+// Assumes `page` is on the dashboard. Clicks 物件番号検索, fills up to 20
+// inputs with the given IDs, clicks 検索 once, and leaves the page on the
+// search result. Returns { rowCount }.
+async function searchByNumbers(page, reinsIds) {
+  if (!Array.isArray(reinsIds) || reinsIds.length === 0) return { rowCount: 0 };
+  if (reinsIds.length > 20) {
+    throw new Error(`searchByNumbers: REINS batch limit is 20 (got ${reinsIds.length})`);
+  }
+
+  await page.click(REINS_SELECTORS.dashboard.numberSearchBtn);
+  await page.waitForTimeout(3000);
+
+  const inputs = await page.$$(REINS_SELECTORS.numberSearch.inputs);
+  if (inputs.length < reinsIds.length) {
+    throw new Error(`searchByNumbers: expected ≥${reinsIds.length} input fields, found ${inputs.length}`);
+  }
+  for (let i = 0; i < reinsIds.length; i++) {
+    await inputs[i].fill(String(reinsIds[i]));
+    await page.waitForTimeout(80);
+  }
+
+  await page.click(REINS_SELECTORS.numberSearch.searchBtn);
+  await page.waitForTimeout(5000);
+
+  const rowCount = (await page.$$(REINS_SELECTORS.result.row)).length;
+  return { rowCount };
+}
+
+// ── Parse All Result Rows ─────────────────────────────────
+// Reads the current 物件番号検索結果 table and returns one object per row
+// with column keys. Anchors on the 12-digit 物件番号 cell so it tolerates
+// wrapping structure changes. The row has 26 direct children including 3
+// empty spacer cells between visual column groups — offsets below skip them.
+//
+// DOM cell layout (observed 2026-04-21 via debug-batch-rows.js):
+//   [idIdx+0]  物件番号        [idIdx+11] 賃料
+//   [idIdx+1]  物件種別        [idIdx+12] ㎡単価
+//   [idIdx+2]  土地面積        [idIdx+13] 沿線駅
+//   [idIdx+3]  所在地          [idIdx+14] 交通
+//   [idIdx+4]  取引状況        [idIdx+15] (spacer)
+//   [idIdx+5]  物件種目        [idIdx+16] 坪単価
+//   [idIdx+6]  建物面積        [idIdx+17] 商号
+//   [idIdx+7]  建物名          [idIdx+18] (spacer)
+//   [idIdx+8]  部屋番号        [idIdx+19] 築年月
+//   [idIdx+9]  所在階          [idIdx+20] 電話番号
+//   [idIdx+10] (spacer)
+async function parseAllResultRows(page) {
+  return await page.evaluate(() => {
+    const OFFSETS_FROM_ID = {
+      '物件番号': 0,
+      '物件種別': 1,
+      '土地面積': 2,
+      '所在地': 3,
+      '取引状況': 4,
+      '物件種目': 5,
+      '建物面積': 6,
+      '建物名': 7,
+      '部屋番号': 8,
+      '所在階': 9,
+      '賃料': 11,
+      '㎡単価': 12,
+      '沿線駅': 13,
+      '交通': 14,
+      '坪単価': 16,
+      '商号': 17,
+      '築年月': 19,
+      '電話番号': 20,
+    };
+
+    const rowEls = Array.from(document.querySelectorAll('.p-table-body-row'));
+    return rowEls.map((row) => {
+      const cellText = (el) => (el.innerText || el.textContent || '').trim();
+      const cells = Array.from(row.children).map(cellText);
+
+      const idIdx = cells.findIndex((t) => /^\d{12}$/.test(t));
+      if (idIdx === -1) {
+        // Fallback: innerText split — collapses spacer cells, so shift offsets
+        // back to their visible-only positions.
+        const visibleCols = [
+          '物件番号', '物件種別', '土地面積', '所在地', '取引状況',
+          '物件種目', '建物面積', '建物名', '部屋番号', '所在階',
+          '賃料', '㎡単価', '沿線駅', '交通', '坪単価',
+          '商号', '築年月', '電話番号',
+        ];
+        const lines = ((row.innerText || '').split('\n').map((s) => s.trim()));
+        const idLineIdx = lines.findIndex((t) => /^\d{12}$/.test(t));
+        if (idLineIdx === -1) return null;
+        const obj = {};
+        for (let i = 0; i < visibleCols.length; i++) {
+          obj[visibleCols[i]] = lines[idLineIdx + i] || '';
+        }
+        obj.__source = 'innerText-split';
+        return obj;
+      }
+
+      const obj = {};
+      for (const [col, off] of Object.entries(OFFSETS_FROM_ID)) {
+        obj[col] = cells[idIdx + off] || '';
+      }
+      obj.__source = 'children-cells';
+      return obj;
+    }).filter(Boolean);
+  });
+}
+
 // ── Screenshot Image Popup (fixed coordinates) ─────────────
 async function screenshotImagePopup(page, imageIndex) {
   const cards = await page.$$(REINS_SELECTORS.detail.imageCard);
@@ -391,7 +574,10 @@ module.exports = {
   REINS_SELECTORS,
   login,
   searchByNumber,
+  searchByNumbers,
+  parseAllResultRows,
   extractPropertyData,
   extractImageData,
   screenshotAllImages,
+  screenshotImagePopup,
 };

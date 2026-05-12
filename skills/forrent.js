@@ -42,10 +42,26 @@ const FORRENT_SELECTORS = {
 const S = "${bukkenInputForm.";
 
 // 物件種別 code
+// REINSは "タウン" / "戸建" 等の短縮形を返すことがあるため略称も許容する。
+// どれにもマッチしない場合のフォールバックは下の resolvePropertyTypeCode() で。
 const PROPERTY_TYPE_CODE = {
-  マンション: "01", アパート: "02", "一戸建て": "11", "一戸建": "11",
-  "テラス・タウンハウス": "16", テラスハウス: "16", タウンハウス: "16", その他: "99",
+  マンション: "01", アパート: "02", "一戸建て": "11", "一戸建": "11", 戸建: "11",
+  "テラス・タウンハウス": "16", テラスハウス: "16", タウンハウス: "16", タウン: "16", テラス: "16",
+  その他: "99",
 };
+
+// REINSの物件種目 → forrent物件種別コード。dict miss 時は部分一致でフォールバック。
+function resolvePropertyTypeCode(shumoku) {
+  if (!shumoku) return null;
+  const key = String(shumoku).trim();
+  const exact = PROPERTY_TYPE_CODE[key];
+  if (exact) return exact;
+  if (/タウン|テラス/.test(key)) return "16";
+  if (/マンション|ＭＳ/i.test(key)) return "01";
+  if (/アパート/.test(key)) return "02";
+  if (/戸建|一戸/.test(key)) return "11";
+  return null;
+}
 
 // 構造 code
 const STRUCTURE_CODE = {
@@ -240,7 +256,13 @@ async function login(page, credentials) {
   await page.fill(FORRENT_SELECTORS.login.passInput, credentials.pass);
   await page.waitForTimeout(300);
   await page.click(FORRENT_SELECTORS.login.submitBtn);
-  await page.waitForTimeout(8000);
+  // 朝のコールドスタートでログイン後遷移が遅延するケースがある。
+  // fixed sleep で諦める代わりに main_r.action への遷移を最大 25s 待つ。
+  try {
+    await page.waitForURL(/main_r\.action/, { timeout: 25000 });
+  } catch {
+    // 遷移しなかった場合は失敗扱い（呼び出し側で再試行されるか FORRENT_LOGIN_FAIL が返る）
+  }
   return page.url().includes("main_r.action");
 }
 
@@ -323,19 +345,36 @@ async function fillPropertyForm(mainFrame, reinsData, initialCostData = null) {
   }
   if (floor) ok("階部分", await fillById(mainFrame, "kaibubun", floor, "階部分"));
 
-  // 号室 — id="heyaNoInput", max=10
-  if (reinsData.部屋番号) ok("号室", await fillById(mainFrame, "heyaNoInput", reinsData.部屋番号, "号室"));
+  // 号室 — id="heyaNoInput", max=10, 半角英数記号のみ
+  // 念のため入力直前にも全角→半角正規化 + 最終チェック（REINS側と二重防御）
+  if (reinsData.部屋番号) {
+    const raw = String(reinsData.部屋番号).trim();
+    const normalized = raw
+      .replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+      .replace(/[\u3000\s]+/g, "")
+      .trim();
+    if (/^[\x21-\x7E]{1,10}$/.test(normalized)) {
+      ok("号室", await fillById(mainFrame, "heyaNoInput", normalized, "号室"));
+    } else {
+      console.log(`[forrent] 号室スキップ: "${raw}" は半角10桁以内を満たさない`);
+    }
+  }
 
   // 物件種別 — select name="${bukkenInputForm.bukkenShuCd}"
   //   マンション(01), アパート(02), 一戸建て(11), テラス・タウンハウス(16), その他(99)
   //   木造/軽量鉄骨の場合は物件種目がマンションでもアパート(02)に強制変更
+  //   必須フィールドのため、マッピングに失敗した場合は "その他"(99) でフォールバック。
   if (reinsData.物件種目) {
-    let code = PROPERTY_TYPE_CODE[norm(reinsData.物件種目)];
+    let code = resolvePropertyTypeCode(norm(reinsData.物件種目));
     const struct = norm(reinsData.建物構造 || "");
     if (code === "01" && /木造|軽量鉄骨|LS/.test(struct)) {
       code = "02"; // マンション+木造/軽量鉄骨 → アパート
     }
-    if (code) ok("物件種別", await selectByName(mainFrame, `${S}bukkenShuCd}`, code, "物件種別"));
+    if (!code) {
+      console.log(`[forrent] 物件種別マッピング失敗: "${reinsData.物件種目}" → その他(99) でフォールバック`);
+      code = "99";
+    }
+    ok("物件種別", await selectByName(mainFrame, `${S}bukkenShuCd}`, code, "物件種別"));
   }
 
   // 構造 — select name="${bukkenInputForm.kozoShuCd}"
@@ -380,9 +419,13 @@ async function fillPropertyForm(mainFrame, reinsData, initialCostData = null) {
     let shinchikuIdx = 0; // default: 中古 (value=2, index=0=#shinchikuKbnCd1)
     if (yearM) {
       const builtYear = parseInt(yearM[1], 10);
-      const currentYear = new Date().getFullYear();
-      if (currentYear - builtYear <= 1) {
-        // 築1年以内 → 新築
+      const builtMonth = monthM ? parseInt(monthM[1], 10) : 1;
+      const now = new Date();
+      // 築1年未満 (=12ヶ月未満) → 新築。月精度で判定しないと、年初の物件で +14ヶ月でも
+      // 「currentYear - builtYear = 1」となり 新築扱いされる事故が発生する
+      // (再現済み: 100138970003 — 2025年1月築 / 2026-04 入稿で「築年月が1年以上前」エラー)
+      const monthsSinceBuilt = (now.getFullYear() - builtYear) * 12 + (now.getMonth() + 1 - builtMonth);
+      if (monthsSinceBuilt < 12) {
         shinchikuIdx = 1; // value=1, index=1=#shinchikuKbnCd2
       }
     }
@@ -1524,7 +1567,10 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCo
     ? [reinsData.備考1, reinsData.備考2, reinsData.備考3,
        reinsData.条件フリー, reinsData.設備フリー, reinsData.その他一時金].filter(Boolean).join(" ")
     : "";
-  const biko = toFullWidth(bikoRaw).slice(0, 200);
+  // 改行 (\n / \r\n) は forrent 送信時に CRLF に展開され、サーバ側「200文字以内」
+  // バリデータが 1 改行 = 2 文字としてカウントするため、slice 前に全角スペースへ置換する。
+  // (再現済み: 100138979162 / 100139003800 の REG_FAIL — 200 → 201 として弾かれた)
+  const biko = toFullWidth(bikoRaw).replace(/[\r\n]+/g, "　").slice(0, 200);
 
   // Build cost item descriptions for etcHiyoShosai
   const costItems = [];
@@ -1854,7 +1900,8 @@ async function uploadImages(mainFrame, processedImages) {
           }
           const nameEl = document.getElementById(`destination${n}`);
           if (nameEl) {
-            nameEl.value = catName;
+            // forrent 側「30文字以内」バリデータに合わせてクリップ
+            nameEl.value = (catName || "").slice(0, 30);
             nameEl.dispatchEvent(new Event("input", { bubbles: true }));
           }
           const distEl = document.getElementById(`distance${n}`);
@@ -2526,6 +2573,22 @@ async function fillShuhenKankyo(page, mainFrame) {
 
     // mainFrameの周辺環境フィールドが設定されたか確認
     await mainFrame.waitForTimeout(1000);
+
+    // らくらく周辺環境ポップアップが書き込んだ施設名を 30 文字以内にクリップ。
+    // Google系の長い施設名 (例: "ゆうちょ銀行 本店 ファミリーマート中野江原町一丁目店内出張所" 31文字)
+    // をそのまま POST すると forrent 側「30文字以内」バリデータで弾かれる。
+    // (再現済み: 100138990085 周辺環境名6 / 100139003800 周辺環境名6 / 100139017573 周辺環境名4)
+    await mainFrame.evaluate(() => {
+      for (let i = 0; i < 6; i++) {
+        const nameEl = document.querySelector(`input[name="bukkenInputForm.shuhenKankyoInputForm[${i}].shuhenKankyoNm"]`);
+        if (nameEl && nameEl.value && nameEl.value.length > 30) {
+          nameEl.value = nameEl.value.slice(0, 30);
+          nameEl.dispatchEvent(new Event("input", { bubbles: true }));
+          nameEl.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }
+    }).catch(() => {});
+
     const shuhenResult = await mainFrame.evaluate(() => {
       const out = [];
       for (let i = 0; i < 6; i++) {
@@ -2651,13 +2714,120 @@ function toFullWidth(str) {
 }
 
 /**
+ * バリデーション情報を確認画面のフレームから収集する。
+ * 「エラー 一覧」見出しだけでなく、内側のリスト項目・フィールド別メッセージ・
+ * 赤字警告などを網羅的に拾って `errors[]` と `errorSectionText` に集約する。
+ */
+async function scrapeValidation(frame) {
+  return await frame.evaluate(() => {
+    const body = document.body?.innerText || "";
+    const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
+    const uniq = (arr) => [...new Set(arr)];
+    const scoreMatch = body.match(/名寄せスコア[：:\s]*(\d+)/);
+
+    // forrent のエラー一覧テーブル構造:
+    //   <table>
+    //     <tr>...|状況|区分|内容|当該箇所へ| ...</tr>  ← ヘッダ
+    //     <tr><td>...</td><td>区分名(ex:桁数チェック)</td><td>実エラー文</td><td>リンク</td></tr>
+    //     ...
+    //   </table>
+    // この構造の tbody 行からのみエラーを拾い、他の画面要素（"よろしければ登録ボタンをクリックしてください" 等）は拾わない。
+    // forrent の実 DOM では err_table の構造が:
+    //   <tbody>
+    //     <tr class="headLineError"><td colspan="4">エラー 一覧</td></tr>          ← タイトル行
+    //     <tr class="headLineErrorHead"><td>状況</td><td>区分</td><td>内容</td></tr> ← ヘッダ行 (2 行目)
+    //     <tr class="headLineErrorLine" id="error"><td>...</td><td>区分名</td><td>エラー文</td><td>当該箇所へ</td></tr>
+    //   </tbody>
+    // よって "thead/tr:first-child" 検査では検出できない。id="err_table" 直マッチ + 全行スキャンで補強。
+    const tables = [...document.querySelectorAll("table")];
+    const errorRows = [];
+    for (const tbl of tables) {
+      let isErrorTable = tbl.id === "err_table";
+      if (!isErrorTable) {
+        const allText = clean(tbl.textContent || "");
+        // 任意の行に 状況/区分/内容 が揃っていればエラーテーブルとみなす
+        isErrorTable =
+          /状況/.test(allText) && /区分/.test(allText) && /内容/.test(allText) &&
+          (/エラー\s*一覧/.test(allText) || tbl.id === "err_table");
+      }
+      if (!isErrorTable) continue;
+      const rows = [...tbl.querySelectorAll("tr")];
+      for (const tr of rows) {
+        // タイトル行 (colspan のみ) / ヘッダ行 (状況/区分/内容) は除外
+        if (tr.classList.contains("headLineError")) continue;
+        if (tr.classList.contains("headLineErrorHead")) continue;
+        const cells = [...tr.querySelectorAll("td")].map((td) => clean(td.textContent));
+        if (cells.length < 3) continue;
+        const category = cells[cells.length - 3] || "";
+        const content = cells[cells.length - 2] || "";
+        if (!content || content.length < 2) continue;
+        if (/^当該箇所へ$/.test(content)) continue;
+        // 万が一クラスでフィルタ漏れた場合の保険: ヘッダ語そのものを除外
+        if (content === "内容" || content === "区分") continue;
+        errorRows.push({ category, content });
+      }
+    }
+
+    // フォールバック: error クラス要素（エラーテーブルが壊れていた場合の保険）
+    const fieldErrors = [];
+    if (errorRows.length === 0) {
+      const msgEls = document.querySelectorAll(
+        '.errorMessage, .error_message, .errMsg, [class*="ErrorMsg"], .formError'
+      );
+      for (const el of msgEls) {
+        const t = clean(el.textContent);
+        if (t.length > 2 && t.length < 200 && !/^エラー\s*一覧$/.test(t)) fieldErrors.push(t);
+      }
+    }
+
+    const errors = uniq([...errorRows.map((r) => r.content), ...fieldErrors]);
+    // hasError は「エラーテーブルに具体的な行がある」を真のシグナルとする。
+    // 確認画面(正常時)にも "エラー 一覧" テーブルは存在するが行は空なので hasError=false。
+    const hasError = errors.length > 0;
+
+    return {
+      errors,
+      errorRows,
+      hasError,
+      score: scoreMatch ? parseInt(scoreMatch[1]) : null,
+      bodySnippet: body.slice(0, 500),
+    };
+  });
+}
+
+/**
+ * artifact ディレクトリに確認画面の HTML / PNG を保存する（失敗原因の事後調査用）。
+ */
+async function saveFrameArtifacts(page, frame, dir, tag) {
+  if (!dir) return;
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  try {
+    const html = await frame.content();
+    fs.writeFileSync(path.join(dir, `${tag}.html`), html);
+  } catch (e) {
+    try { fs.writeFileSync(path.join(dir, `${tag}.html.err`), String(e.message || e)); } catch {}
+  }
+  try {
+    await page.screenshot({ path: path.join(dir, `${tag}.png`), fullPage: true });
+  } catch (e) {
+    try { fs.writeFileSync(path.join(dir, `${tag}.png.err`), String(e.message || e)); } catch {}
+  }
+}
+
+/**
  * 物件登録 — 2ステップフロー:
  *   Step A: regButton2（確認画面へ）をクリック → バリデーション
  *   Step B: エラーなしなら確認画面上部の「登録」ボタンをクリック → 実登録
  *
  * エラーが出た場合はダイアログを受諾してリトライ（最大2回）
+ *
+ * @param {object} page - Playwright Page
+ * @param {object} mainFrame - main frame reference
+ * @param {object} [opts] - options
+ * @param {string} [opts.artifactDir] - 指定時、確認画面の HTML/PNG を保存
  */
-async function registerProperty(page, mainFrame) {
+async function registerProperty(page, mainFrame, opts = {}) {
+  const { artifactDir } = opts;
   console.log("[forrent] === REGISTER PROPERTY START ===");
   try {
     const dialogs = [];
@@ -2667,6 +2837,7 @@ async function registerProperty(page, mainFrame) {
     });
 
     const MAX_ATTEMPTS = 2;
+    let lastValidation = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       console.log(`[forrent] 確認画面へ 試行 ${attempt}/${MAX_ATTEMPTS}`);
 
@@ -2701,37 +2872,43 @@ async function registerProperty(page, mainFrame) {
       // 確認画面のフレームを再取得
       const confirmFrame = page.frame({ name: "main" }) || mainFrame;
 
-      // バリデーション結果を確認
-      const validation = await confirmFrame.evaluate(() => {
-        const body = document.body?.innerText || "";
-        const errorEls = document.querySelectorAll('.errorMessage, .error, [class*="error"], [class*="Error"]');
-        const errors = [...errorEls].map(el => el.textContent.trim()).filter(t => t.length > 2);
-        const hasError = errors.length > 0 || body.includes("エラー");
-        const scoreMatch = body.match(/名寄せスコア[：:\s]*(\d+)/);
-        return { errors, hasError, score: scoreMatch ? parseInt(scoreMatch[1]) : null };
-      });
+      // バリデーション結果を詳細スクレイプ
+      const validation = await scrapeValidation(confirmFrame);
+      lastValidation = validation;
 
       if (dialogs.length > 0) {
         console.log(`[forrent] ダイアログ: ${dialogs.map(d => d.message).join(", ")}`);
       }
 
+      // 確認画面スナップショットを保存（成否問わず）
+      await saveFrameArtifacts(page, confirmFrame, artifactDir, `confirm-attempt${attempt}`);
+
       // エラーあり → リトライ
       if (validation.hasError && attempt < MAX_ATTEMPTS) {
         console.log(`[forrent] バリデーションエラー (${validation.errors.length}件) → リトライ`);
-        for (const e of validation.errors.slice(0, 5)) console.log(`[forrent]   - ${e}`);
+        for (const e of validation.errors.slice(0, 8)) console.log(`[forrent]   - ${e}`);
         dialogs.length = 0;
         continue;
       }
 
       if (validation.hasError) {
-        console.log(`[forrent] バリデーションエラー残存 (最終試行): ${validation.errors.slice(0, 5).join(", ")}`);
+        console.log(`[forrent] バリデーションエラー残存 (最終試行): ${validation.errors.slice(0, 8).join(" / ")}`);
+        if (artifactDir) {
+          try {
+            fs.writeFileSync(
+              path.join(artifactDir, "validation.json"),
+              JSON.stringify(validation, null, 2)
+            );
+          } catch {}
+        }
         return {
           saved: false,
           registrationType: null,
           score: validation.score,
           dialogs,
           errors: validation.errors,
-          error: `バリデーションエラー: ${validation.errors[0] || "不明"}`,
+          errorRows: validation.errorRows,
+          error: `バリデーションエラー: ${validation.errors[0] || "詳細不明（artifactDir の validation.json を参照）"}`,
         };
       }
 
@@ -2790,9 +2967,10 @@ async function registerProperty(page, mainFrame) {
 
       const finalScore = result.score || validation.score;
       console.log(`[forrent] === REGISTER END === 登録完了 (score: ${finalScore}, complete: ${result.isComplete})`);
+      await saveFrameArtifacts(page, finalFrame, artifactDir, "final");
       return {
         saved: true,
-        registrationType: "登録済み",
+        registrationType: "掲載保留",
         score: finalScore,
         dialogs,
         errors: [],
@@ -2800,6 +2978,12 @@ async function registerProperty(page, mainFrame) {
     }
   } catch (e) {
     console.log(`[forrent] 登録エラー: ${e.message}`);
+    if (artifactDir) {
+      try {
+        const f = page.frame({ name: "main" });
+        if (f) await saveFrameArtifacts(page, f, artifactDir, "exception");
+      } catch {}
+    }
     return { saved: false, registrationType: null, error: e.message };
   }
 }

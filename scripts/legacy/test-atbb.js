@@ -12,9 +12,9 @@
  *   bun run scripts/test-atbb.js "グランドコンシェルジュ三田" "301"
  */
 const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, "..", ".env.local") });
+require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env.local") });
 const { chromium } = require("playwright");
-const atbb = require("../skills/atbb");
+const atbb = require("../../skills/atbb");
 
 // Default test case — replace with a known ATBB-listed property
 const DEFAULT_BUILDING = "グランドコンシェルジュ三田";

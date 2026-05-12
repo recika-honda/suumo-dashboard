@@ -10,12 +10,17 @@ const next = require("next");
 const { chromium } = require("playwright");
 
 const reins = require("./skills/reins");
-const forrent = require("./skills/forrent");
-const { analyzeAndCropImages } = require("./skills/image-ai");
-const { generateTexts } = require("./skills/text-ai");
-const { checkImageSufficiency, fetchBukakuData } = require("./skills/bukaku");
-const { fetchShuhenPhotos } = require("./skills/google-images");
 // atbb removed — initial costs now fetched via bukaku platforms
+
+// 2026-05 refactor: pipeline は 6 stage に分割済み。ダッシュボード経由でも同じ stages を使う
+// ことで、spec-driven validation (config/forrent-required.spec.json) や sanitizeForLength の
+// CRLF anti-pattern 予防が一元的に効くようにする。stages の正典は docs/refactor/stages.md。
+const { runReinsExtract } = require("./scripts/stages/01-reins-extract");
+const { runImagesDownload } = require("./scripts/stages/02-images-download");
+const { runImagesClassify } = require("./scripts/stages/03-images-classify");
+const { runTextsGenerate } = require("./scripts/stages/04-texts-generate");
+const { runForrentFill } = require("./scripts/stages/05-forrent-fill");
+const { runForrentRegister } = require("./scripts/stages/06-forrent-register");
 
 const dev = process.env.NODE_ENV !== "production";
 const nextApp = next({ dev });
@@ -26,6 +31,40 @@ function sleep(ms) {
 }
 
 // ══════════════════════════════════════════════════════════
+//  STAGE EVENT → UI bridge
+// ══════════════════════════════════════════════════════════
+// stages の logStep("event_name", payload) を UI の step-update emit に変換するマップ。
+// step は 0-6 (Step 0: REINS login は server.js で直接 emit するためここに含めない)。
+// msg は string か (payload) => string。null は emit スキップ。
+// 完了系の event (images_downloaded / form_filled / register_success 等) は server.js 側で
+// stage 直後に done emit するため、ここでブリッジしない (二重発火回避)。
+// 定数なので runNyuko 外に置く (同期接続ごとの再生成を避ける)。
+const STAGE_EVENT_TO_UI = {
+  // Step 1
+  reins_search_start:        { step: 1, msg: "REINS で物件番号を検索中..." },
+  // Step 2
+  extract_image_meta_start:  { step: 2, msg: "画像セクションに移動中..." },
+  screenshot_start:          { step: 2, msg: (p) => `${p.count || 0}枚の画像をスクリーンショット中...` },
+  // Step 3
+  ai_classify_start:         { step: 3, msg: "画像をカテゴリ分類中..." },
+  bukaku_supplement_start:   { step: 3, msg: (p) => `5pt不足カテゴリ補完中 (${(p.missing || []).join(",")})` },
+  shuhen_fetch_start:        { step: 3, msg: "周辺環境写真を取得中..." },
+  // Step 4
+  text_ai_start:             { step: 4, msg: "AI でキャッチコピー・コメント生成中..." },
+  // Step 5
+  forrent_login_start:       { step: 5, msg: "fn.forrent.jpにログイン中..." },
+  navigate_form_start:       { step: 5, msg: "新規物件登録フォームに移動中..." },
+  fill_property_form_start:  { step: 5, msg: "フォームフィールドを入力中..." },
+  fill_texts_start:          { step: 5, msg: "キャッチコピー・コメントを入力中..." },
+  upload_images_start:       { step: 5, msg: (p) => `${p.count || 0}枚の画像をアップロード中...` },
+  fill_tokucho_start:        { step: 5, msg: "特徴項目をチェック中..." },
+  fill_transport_start:      { step: 5, msg: "交通情報を入力中..." },
+  fill_shuhen_start:         { step: 5, msg: "周辺環境を入力中..." },
+  // Step 6
+  register_start:            { step: 6, msg: "登録ボタンを押下中..." },
+};
+
+// ══════════════════════════════════════════════════════════
 //  ORCHESTRATOR: runNyuko — SUUMO listing pipeline (multi-page)
 // ══════════════════════════════════════════════════════════
 async function runNyuko(socket, reinsId) {
@@ -34,13 +73,29 @@ async function runNyuko(socket, reinsId) {
   const done = (payload) => socket.emit("done", payload);
   const fail = (msg) => socket.emit("error", { message: msg });
 
-  // Desktop保存（永続化）
+  // stages 内のイベントを console.log + UI emit にブリッジ。
+  // runDir は未指定で artifact 永続化スキップ — ad-hoc 実行のためファイル化不要。
+  // UI emit は STAGE_EVENT_TO_UI で定義された event のみ。stage 完了系の event は
+  // server.js 側で別途 done emit するためここでは流さない (二重発火回避)。
+  const logStep = (event, payload) => {
+    if (payload && Object.keys(payload).length > 0) {
+      console.log(`[stage] ${event}`, JSON.stringify(payload).slice(0, 200));
+    } else {
+      console.log(`[stage] ${event}`);
+    }
+    const mapping = STAGE_EVENT_TO_UI[event];
+    if (mapping) {
+      const detail = typeof mapping.msg === "function" ? mapping.msg(payload || {}) : mapping.msg;
+      if (detail) emit(mapping.step, "running", detail);
+    }
+  };
+
+  // Desktop 保存 (永続化)
   const downloadDir = path.join(os.homedir(), "Desktop", "suumo-nyuko", reinsId);
-  if (!fs.existsSync(downloadDir)) {
-    fs.mkdirSync(downloadDir, { recursive: true });
-  }
+  fs.mkdirSync(downloadDir, { recursive: true });
 
   let browser;
+  let r5;
 
   // 15-minute global timeout
   const globalTimeout = setTimeout(() => {
@@ -50,15 +105,10 @@ async function runNyuko(socket, reinsId) {
 
   try {
     browser = await chromium.launch({ headless: false });
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 900 },
-    });
-
-    // REINS用ページ: デフォルトの空白タブを再利用（不要タブが開かないように）
-    // forrent.jp用はStep 5で作成 — 早期作成だとブラウザのメモリ圧迫でクラッシュする
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const reinsPage = context.pages()[0] || await context.newPage();
 
-    // ── Step 0: REINS ログイン ──
+    // ── Step 0: REINS ログイン (stages 化されていないため server.js 側に残す) ──
     emit(0, "running", "system.reins.jpにログイン中...");
     const reinsLoginOk = await reins.login(reinsPage, {
       id: process.env.REINS_LOGIN_ID,
@@ -70,216 +120,92 @@ async function runNyuko(socket, reinsId) {
     }
     emit(0, "done", "ログイン成功");
 
-    // ── Step 1: データ抽出 ──
+    // ── Step 1: REINS データ抽出 + spec-driven 早期 validation (stage 01) ──
     emit(1, "running", `物件番号 ${reinsId} を検索中...`);
-    const found = await reins.searchByNumber(reinsPage, reinsId);
-    if (!found) {
+    const r1 = await runReinsExtract({ reinsPage, reinsId, index: 0, logStep });
+    if (r1.status === "NOT_FOUND") {
       fail(`物件番号 ${reinsId} が見つかりませんでした。番号を確認してください。`);
       return;
     }
-    const reinsData = await reins.extractPropertyData(reinsPage);
-    emit(1, "done", reinsData.建物名 || reinsId);
+    if (r1.status === "REG_FAIL") {
+      emit(1, "done", `必須項目欠落: ${r1.reason}`);
+      fail(`必須項目欠落により入稿不可: ${r1.reason}`);
+      return;
+    }
+    const reinsData = r1.reinsData;
+    emit(1, "done", r1.propertyName);
 
-    // ── 物確: 初期費用 + 画像取得（Step 2-4と並行実行） ──
-    const bukakuDataPromise = fetchBukakuData(context, reinsData, downloadDir).catch((e) => {
-      console.error(`[bukaku] Pipeline error (non-blocking): ${e.message}`);
-      return { initialCosts: null, images: [] };
+    // ── Step 2: 画像スクリーンショット (stage 02) ──
+    emit(2, "running", "画像を取得中...");
+    const r2 = await runImagesDownload({ reinsPage, downloadDir, logStep });
+    emit(2, "done", `${r2.downloaded.length}枚スクリーンショット完了 → ~/Desktop/suumo-nyuko/${reinsId}/`);
+
+    // ── Step 3: AI 画像分類 + 物確補完 + 周辺環境 (stage 03) ──
+    emit(3, "running", "AI画像分類・物確補完・周辺環境取得中...");
+    const r3 = await runImagesClassify({
+      context,
+      reinsData,
+      downloaded: r2.downloaded,
+      downloadDir,
+      logStep,
+      launchOpts: { headless: false },
     });
+    emit(3, "done", `${r3.processedImages.length}枚`);
 
-    // ── Step 2: 画像スクリーンショット ──
-    emit(2, "running", "画像セクションに移動中...");
-    const imagesMeta = await reins.extractImageData(reinsPage);
-    emit(2, "running", `${imagesMeta.length}枚の画像をスクリーンショット中...`);
-    const downloaded = await reins.screenshotAllImages(reinsPage, imagesMeta, downloadDir);
-    emit(2, "done", `${downloaded.length}枚スクリーンショット完了 → ~/Desktop/suumo-nyuko/${reinsId}/`);
-    // REINSタイトルをログ
-    for (const d of downloaded) {
-      if (d.title) console.log(`  画像${d.index}: "${d.title}"`);
-    }
-
-    // ── Step 3: AI画像処理 ──
-    emit(3, "running", "画像をカテゴリ分類中...");
-    const processedImages = await analyzeAndCropImages(downloaded, downloadDir);
-    emit(3, "done", `${processedImages.length}枚のカテゴリ画像を生成`);
-
-    // ── Step 3.5: 物確プラットフォームから初期費用 + 追加画像 ──
-    const bukakuResult = await bukakuDataPromise;
-    const initialCostData = bukakuResult.initialCosts;
-    if (initialCostData) {
-      emit(3, "running", `物確初期費用: ${Object.keys(initialCostData).length}項目取得`);
-    }
-
-    const sufficiency = checkImageSufficiency(processedImages);
-    if (sufficiency.insufficient && bukakuResult.images.length > 0) {
-      emit(3, "running", `5ptカテゴリ不足(${sufficiency.missing5pt.join(",")}) → 物確画像を分類中...`);
-      try {
-        const existingCats = processedImages.map(img => img.categoryId);
-        const bukakuProcessed = await analyzeAndCropImages(bukakuResult.images, downloadDir, existingCats);
-        processedImages.push(...bukakuProcessed);
-        emit(3, "running", `物確から${bukakuProcessed.length}枚追加`);
-      } catch (e) {
-        console.error("[bukaku] Image classification error:", e.message);
-      }
-    }
-    emit(3, "done", `${processedImages.length}枚`);
-
-    // ── Step 3.7: 周辺環境写真をGoogle Mapsから取得 ──
-    // Use a separate browser to isolate heavy Google Maps pages from the main pipeline.
-    // Google Maps can crash the browser due to memory pressure, which would kill forrentPage.
-    emit(3, "running", "周辺環境写真をGoogle Maps + 画像検索で取得中...");
-    let shuhenBrowser;
-    try {
-      shuhenBrowser = await chromium.launch({ headless: false });
-      const shuhenContext = await shuhenBrowser.newContext({
-        viewport: { width: 1280, height: 900 },
-      });
-      const shuhenPhotos = await fetchShuhenPhotos(shuhenContext, reinsData, downloadDir);
-      if (shuhenPhotos.length > 0) {
-        // Add shuhen photos as "周辺環境" category
-        for (const photo of shuhenPhotos) {
-          processedImages.push({
-            localPath: photo.localPath,
-            categoryId: "SH",
-            categoryLabel: "周辺環境",
-            facilityType: photo.facilityType,
-            facilityName: photo.facilityName,
-            sourceIndex: 200 + shuhenPhotos.indexOf(photo),
-          });
-        }
-        emit(3, "done", `${processedImages.length}枚（周辺環境${shuhenPhotos.length}枚含む）`);
-      } else {
-        emit(3, "done", `${processedImages.length}枚`);
-      }
-    } catch (e) {
-      console.error("[shuhen] Error:", e.message);
-      emit(3, "done", `${processedImages.length}枚`);
-    } finally {
-      if (shuhenBrowser) await shuhenBrowser.close().catch(() => {});
-    }
-
-    // ── Step 4: AIテキスト生成 ──
+    // ── Step 4: AI テキスト生成 (stage 04) ──
     emit(4, "running", "キャッチコピーとコメントを生成中...");
-    const texts = await generateTexts(reinsData);
+    const texts = await runTextsGenerate({ reinsData, logStep });
     emit(4, "done", `"${texts.catchCopy}"`);
 
-    // ── Step 5: forrent.jp 入稿 ──
-    const forrentPage = await context.newPage();
-    emit(5, "running", "fn.forrent.jpにログイン中...");
-    const forrentLoginOk = await forrent.login(forrentPage, {
-      id: process.env.SUUMO_LOGIN_ID,
-      pass: process.env.SUUMO_LOGIN_PASS,
+    // ── Step 5: forrent.jp ログイン + フォーム入力 (stage 05) ──
+    emit(5, "running", "fn.forrent.jpにログイン・入稿中...");
+    r5 = await runForrentFill({
+      context,
+      reinsData,
+      processedImages: r3.processedImages,
+      initialCostData: r3.initialCostData,
+      texts,
+      logStep,
     });
-    if (!forrentLoginOk) {
+    if (r5.status === "FORRENT_LOGIN_FAIL") {
       fail("forrent.jpログインに失敗しました。");
       return;
     }
-
-    emit(5, "running", "新規物件登録フォームに移動中...");
-    let { mainFrame } = await forrent.navigateToNewProperty(forrentPage);
-
-    if (initialCostData) {
-      console.log(`[bukaku] Pipeline: ${JSON.stringify(initialCostData)}`);
-    } else {
-      console.log("[bukaku] Pipeline: 初期費用データなし（REINSフォールバック）");
-    }
-
-    emit(5, "running", "フォームフィールドを入力中...");
-    const { filled, errors: formErrors } = await forrent.fillPropertyForm(
-      mainFrame,
-      reinsData,
-      initialCostData
+    emit(
+      5,
+      "done",
+      `入力${Object.keys(r5.filled).length}件, 画像${r5.uploaded.length}枚, 交通${r5.transport.filled.length}件, 周辺${r5.shuhen.filled.length}件`
     );
 
-    // キャッチコピー・コメント（交通より前に実行 — 交通がフレーム離脱を起こす可能性があるため）
-    emit(5, "running", "キャッチコピー・コメントを入力中...");
-    const textErrors = await forrent.fillTexts(
-      mainFrame,
-      texts.catchCopy,
-      texts.freeComment,
-      reinsData,
-      initialCostData
-    );
-
-    // 画像アップロード
-    emit(5, "running", `${processedImages.length}枚の画像をアップロード中...`);
-    const { uploaded, errors: uploadErrors } = await forrent.uploadImages(
-      mainFrame,
-      processedImages
-    );
-
-    // 特徴項目チェック
-    emit(5, "running", "特徴項目をチェック中...");
-    const tokuchoResult = await forrent.fillTokucho(mainFrame, reinsData);
-
-    // 交通入力（地図修正 + らくらく交通）
-    emit(5, "running", "交通情報を入力中...");
-    const transportResult = await forrent.fillTransportViaMap(forrentPage, mainFrame, reinsData.交通);
-
-    // ポップアップ操作後にmainFrameを再取得（フレーム参照が無効化される場合がある）
-    mainFrame = forrentPage.frame({ name: "main" }) || mainFrame;
-
-    // 周辺環境入力（らくらく周辺環境）
-    emit(5, "running", "周辺環境を入力中...");
-    const shuhenResult = await forrent.fillShuhenKankyo(forrentPage, mainFrame);
-
-    // ポップアップ操作後にmainFrameを再取得
-    mainFrame = forrentPage.frame({ name: "main" }) || mainFrame;
-
-    // 周辺環境の施設名をポップアップ結果から画像メタデータへ同期
-    try {
-      await mainFrame.evaluate(() => {
-        for (let i = 0; i < 6; i++) {
-          const nameEl = document.querySelector(`input[name="bukkenInputForm.shuhenKankyoInputForm[${i}].shuhenKankyoNm"]`);
-          const destEl = document.getElementById(`destination${i + 1}`);
-          if (nameEl && nameEl.value && destEl) {
-            destEl.value = nameEl.value;
-            destEl.dispatchEvent(new Event("input", { bubbles: true }));
-          }
-        }
-      });
-      console.log("[server] 周辺環境名称を画像メタデータに同期完了");
-    } catch (e) {
-      console.log(`[server] 周辺環境名称同期スキップ: ${e.message.slice(0, 60)}`);
-    }
-
-    const allErrors = [
-      ...formErrors,
-      ...transportResult.errors,
-      ...textErrors,
-      ...uploadErrors,
-      ...shuhenResult.errors,
-    ];
-    emit(5, "done", `入力${Object.keys(filled).length}件, 画像${uploaded.length}枚, 交通${transportResult.filled.length}件, 周辺${shuhenResult.filled.length}件`);
-
-    // ── Step 6: 登録（一時登録 or 登録ボタンを押す） ──
+    // ── Step 6: 登録 + スコア検証 (stage 06) ──
     emit(6, "running", "登録中...");
-    let regResult = { saved: false, registrationType: null };
-    try {
-      regResult = await forrent.registerProperty(forrentPage, mainFrame);
-
-      if (regResult.saved) {
-        const scoreText = regResult.score ? `（名寄せスコア: ${regResult.score}点 / 43点）` : "";
-        emit(6, "done", `${regResult.registrationType}完了${scoreText}`);
-      } else {
-        emit(6, "done", regResult.error || "登録ボタンが見つかりません");
-      }
-    } catch (e) {
-      emit(6, "done", `登録エラー: ${e.message.slice(0, 100)}`);
+    const r6 = await runForrentRegister({
+      forrentPage: r5.forrentPage,
+      mainFrame: r5.mainFrame,
+      logStep,
+    });
+    if (r6.status === "SUCCESS") {
+      const scoreText = r6.score ? `（名寄せスコア: ${r6.score}点 / 43点）` : "";
+      emit(6, "done", `${r6.registrationType}完了${scoreText}`);
+    } else if (r6.exceptionMessage) {
+      emit(6, "done", `登録エラー: ${r6.exceptionMessage}`);
+    } else {
+      const firstErr = (r6.errors && r6.errors[0]) || "登録ボタンが見つかりません";
+      emit(6, "done", firstErr);
     }
 
     done({
       catchCopy: texts.catchCopy,
       comment: texts.freeComment,
-      propertyName: reinsData.建物名 || reinsId,
-      filledFields: Object.keys(filled).length,
-      uploadedImages: uploaded.length,
-      transport: transportResult.filled,
-      tokucho: tokuchoResult,
-      shuhen: shuhenResult.filled,
-      registered: regResult.saved,
-      registrationType: regResult.registrationType,
-      score: regResult.score,
-      errors: allErrors,
+      propertyName: r1.propertyName || reinsId,
+      filledFields: Object.keys(r5.filled).length,
+      uploadedImages: r5.uploaded.length,
+      transport: r5.transport.filled,
+      shuhen: r5.shuhen.filled,
+      registered: r6.status === "SUCCESS",
+      registrationType: r6.registrationType,
+      score: r6.score,
+      errors: [...(r5.allErrors || []), ...(r6.errors || [])],
       savedTo: downloadDir,
     });
   } catch (err) {
@@ -287,11 +213,8 @@ async function runNyuko(socket, reinsId) {
     fail(`予期しないエラー: ${err.message}`);
   } finally {
     clearTimeout(globalTimeout);
-    // ブラウザは閉じない（ユーザーが確認できるように）
-    // 手動で閉じるまで開いたまま
-    // if (browser) await browser.close().catch(() => {});
-
-    // Desktop保存なので /tmp のクリーンアップは不要
+    // ブラウザは閉じない（ユーザーが確認できるように）- 旧版踏襲
+    // forrentPage も同様に閉じない (旧版踏襲: batch とは異なり UI で確認するため)
   }
 }
 

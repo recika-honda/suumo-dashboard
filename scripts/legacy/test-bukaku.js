@@ -5,9 +5,9 @@
  */
 const path = require("path");
 const fs = require("fs");
-require("dotenv").config({ path: path.join(__dirname, "..", ".env.local") });
+require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env.local") });
 const { chromium } = require("playwright");
-const { detectPlatform, fetchBukakuImages, checkImageSufficiency } = require("../skills/bukaku-images");
+const { detectPlatform, fetchBukakuImages, checkImageSufficiency } = require("../../skills/bukaku-images");
 
 const TEST_CASES = [
   {
@@ -58,7 +58,7 @@ async function test() {
     }
 
     console.log(`[TEST] ${tc.label}`);
-    const downloadDir = path.join(__dirname, "..", "tmp", "bukaku-test");
+    const downloadDir = path.join(__dirname, "..", "..", "tmp", "bukaku-test");
     fs.mkdirSync(downloadDir, { recursive: true });
 
     try {

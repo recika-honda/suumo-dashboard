@@ -1,22 +1,42 @@
 /**
- * クイックテスト — 3物件でフォーム入力の動作確認
+ * バッチテスト — 複数物件を連続処理してスコアを集計
+ *
+ * REINS/forrent.jpログインを1回で済ませ、14物件を順番に処理。
+ *
+ * Usage:
+ *   bun run scripts/batch-test.js
+ *   bun run scripts/batch-test.js --fresh   # キャッシュ無視
  */
+
 const path = require("path");
 const os = require("os");
 const fs = require("fs");
-require("dotenv").config({ path: path.join(__dirname, "..", ".env.local") });
+require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env.local") });
 
 const { chromium } = require("playwright");
-const reins = require("../skills/reins");
-const forrent = require("../skills/forrent");
-const { analyzeAndCropImages } = require("../skills/image-ai");
-const { generateTexts } = require("../skills/text-ai");
+const reins = require("../../skills/reins");
+const forrent = require("../../skills/forrent");
+const { analyzeAndCropImages } = require("../../skills/image-ai");
+const { generateTexts } = require("../../skills/text-ai");
+const { checkImageSufficiency, fetchBukakuImages } = require("../../skills/bukaku-images");
+
+const fresh = process.argv.includes("--fresh");
 
 const PROPERTY_IDS = [
-  "100138010905",  // プルデンシャルタワー（PASS実績）
-  "100137937131",  // みどり荘（管理費エラーあり → 修正確認）
-  "100138006806",  // カスタリア神保町（39pt near-PASS）
-  "100138010644",  // ベルファース（35pt near-PASS）
+  "100138010905",
+  "100138010644",
+  "100137934373",
+  "100138011179",
+  "100137922489",
+  "100138008048",
+  "100137937131",
+  "100137939644",
+  "100138006806",
+  "100137977235",
+  "100137939263",
+  "100137933042",
+  "100137997996",
+  "100137977820",
 ];
 
 const results = [];
@@ -33,25 +53,52 @@ async function processProperty(context, reinsPage, reinsId, index) {
   let reinsData, processedImages, texts;
   let cache = null;
 
-  if (fs.existsSync(cacheFile)) {
+  // キャッシュチェック
+  if (!fresh && fs.existsSync(cacheFile)) {
     try {
       cache = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
       console.log(`  キャッシュ使用: ${cache.reinsData.建物名}`);
-    } catch { cache = null; }
+    } catch {
+      cache = null;
+    }
   }
 
   if (cache) {
     reinsData = cache.reinsData;
-    // map_surrounding除外（修正点12: Google Maps画像は使わない）
     processedImages = (cache.processedImages || []).filter(
       img => !img.localPath.includes("map_surrounding")
     );
     texts = cache.texts;
+
+    // キャッシュ使用時も物確画像が不足なら取得
+    const sufficiency = checkImageSufficiency(processedImages);
+    if (sufficiency.insufficient && !cache.bukakuDone) {
+      console.log(`  [cache+bukaku] 物確画像取得中（不足: ${sufficiency.missingCategories.join(",")}）...`);
+      try {
+        const bukakuImages = await fetchBukakuImages(context, reinsData, downloadDir);
+        if (bukakuImages.length > 0) {
+          const existingCats = processedImages.map(img => img.categoryId);
+          const bukakuProcessed = await analyzeAndCropImages(bukakuImages, downloadDir, existingCats);
+          processedImages.push(...bukakuProcessed);
+          console.log(`  物確: ${bukakuProcessed.length}枚追加 → 合計${processedImages.length}枚`);
+        }
+        // キャッシュ更新
+        cache.processedImages = processedImages;
+        cache.bukakuDone = true;
+        fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 2));
+      } catch (e) {
+        console.log(`  物確エラー: ${e.message.slice(0, 80)}`);
+      }
+    }
   } else {
-    console.log("  [1/4] REINS検索...");
+    // REINS データ取得
+    console.log("  [1/6] REINS検索...");
+
+    // 2物件目以降: ダッシュボードに戻ってから検索
     if (index > 0) {
       await reinsPage.goto("https://system.reins.jp/main/KG/GKG003100", {
-        waitUntil: "networkidle", timeout: 20000,
+        waitUntil: "networkidle",
+        timeout: 20000,
       });
       await reinsPage.waitForTimeout(3000);
     }
@@ -64,25 +111,50 @@ async function processProperty(context, reinsPage, reinsId, index) {
 
     reinsData = await reins.extractPropertyData(reinsPage);
     console.log(`  物件名: ${reinsData.建物名}`);
+    console.log(`  所在地: ${[reinsData.都道府県名, reinsData.所在地名１, reinsData.所在地名２, reinsData.所在地名３].join("")}`);
 
-    console.log("  [2/4] 画像スクリーンショット...");
+    // 画像スクリーンショット
+    console.log("  [2/6] 画像スクリーンショット...");
     const imagesMeta = await reins.extractImageData(reinsPage);
     const downloaded = await reins.screenshotAllImages(reinsPage, imagesMeta, downloadDir);
     console.log(`  ${downloaded.length}枚取得`);
 
-    console.log("  [3/4] AI画像分類...");
+    // AI画像処理
+    console.log("  [3/6] AI画像分類...");
     processedImages = await analyzeAndCropImages(downloaded, downloadDir);
     console.log(`  ${processedImages.length}枚分類完了`);
 
-    console.log("  [4/4] AIテキスト生成...");
+    // 物確プラットフォームから追加画像
+    const sufficiency = checkImageSufficiency(processedImages);
+    if (sufficiency.insufficient) {
+      console.log(`  [3.5/6] 物確画像取得中（不足: ${sufficiency.missingCategories.join(",")}）...`);
+      try {
+        const bukakuImages = await fetchBukakuImages(context, reinsData, downloadDir);
+        if (bukakuImages.length > 0) {
+          const existingCats = processedImages.map(img => img.categoryId);
+          const bukakuProcessed = await analyzeAndCropImages(bukakuImages, downloadDir, existingCats);
+          processedImages.push(...bukakuProcessed);
+          console.log(`  物確: ${bukakuProcessed.length}枚追加 → 合計${processedImages.length}枚`);
+        } else {
+          console.log(`  物確: 画像なし`);
+        }
+      } catch (e) {
+        console.log(`  物確エラー: ${e.message.slice(0, 80)}`);
+      }
+    }
+
+    // AIテキスト生成
+    console.log("  [4/6] AIテキスト生成...");
     texts = await generateTexts(reinsData);
     console.log(`  キャッチ: "${texts.catchCopy}"`);
 
-    const cacheData = { reinsData, processedImages, texts, cachedAt: new Date().toISOString() };
+    // キャッシュ保存
+    const cacheData = { reinsData, processedImages, texts, bukakuDone: true, cachedAt: new Date().toISOString() };
     fs.writeFileSync(cacheFile, JSON.stringify(cacheData, null, 2));
   }
 
-  console.log("  [5/5] forrent.jp入稿...");
+  // forrent.jp フォーム入力（毎回新規ページ）
+  console.log("  [5/6] forrent.jp入稿...");
   const forrentPage = await context.newPage();
 
   try {
@@ -106,10 +178,10 @@ async function processProperty(context, reinsPage, reinsId, index) {
     const shuhenResult = await forrent.fillShuhenKankyo(forrentPage, mainFrame);
 
     const allErrors = [...formErrors, ...transportResult.errors, ...textErrors, ...uploadErrors, ...shuhenResult.errors];
-    console.log(`  OK: ${Object.keys(filled).length}, NG: ${allErrors.length}, 画像: ${uploaded.length}, 交通: ${transportResult.filled.length}, 周辺: ${shuhenResult.filled.length}, 特徴: ${tokuchoResult.checked}`);
+    console.log(`  OK: ${Object.keys(filled).length}, NG: ${allErrors.length}, 画像: ${uploaded.length}, 交通: ${transportResult.filled.length}, 周辺: ${shuhenResult.filled.length}`);
 
-    // スコア確認
-    console.log("  スコア確認...");
+    // 確認画面でスコア確認
+    console.log("  [6/6] スコア確認...");
     let score = null;
     let validationErrors = [];
 
@@ -158,7 +230,8 @@ async function processProperty(context, reinsPage, reinsId, index) {
       console.log(`  確認画面エラー: ${e.message.slice(0, 100)}`);
     }
 
-    const ssPath = path.join(downloadDir, `quick-test-result.png`);
+    // スクリーンショット保存
+    const ssPath = path.join(downloadDir, `batch-result.png`);
     await forrentPage.screenshot({ path: ssPath, fullPage: false });
 
     const status = score !== null ? (score >= 40 ? "PASS" : "FAIL") : "NO_SCORE";
@@ -179,7 +252,6 @@ async function processProperty(context, reinsPage, reinsId, index) {
       images: uploaded.length,
       transport: transportResult.filled.length,
       shuhen: shuhenResult.filled.length,
-      tokucho: tokuchoResult.checked,
       errors: allErrors.length,
       validationErrors: validationErrors.length,
     };
@@ -198,13 +270,16 @@ async function processProperty(context, reinsPage, reinsId, index) {
 
 async function main() {
   console.log("═".repeat(60));
-  console.log("  クイックテスト (3物件)");
+  console.log("  SUUMO入稿バッチテスト");
+  console.log(`  物件数: ${PROPERTY_IDS.length}`);
+  console.log(`  キャッシュ: ${fresh ? "無視" : "あれば使用"}`);
   console.log("═".repeat(60));
 
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 
   try {
+    // REINS ログイン（1回だけ）
     const reinsPage = await context.newPage();
     console.log("\n  REINSログイン中...");
     const reinsOk = await reins.login(reinsPage, {
@@ -218,6 +293,7 @@ async function main() {
     }
     console.log("  REINSログイン成功\n");
 
+    // 各物件を処理
     for (let i = 0; i < PROPERTY_IDS.length; i++) {
       const startTime = Date.now();
       try {
@@ -232,23 +308,53 @@ async function main() {
           status: "FATAL",
           score: null,
           duration: Math.round((Date.now() - startTime) / 1000),
+          error: err.message.slice(0, 100),
         });
       }
     }
 
+    // ══ 最終レポート ══
     console.log(`\n\n${"═".repeat(70)}`);
-    console.log("  クイックテスト結果");
+    console.log("  バッチテスト結果サマリー");
     console.log(`${"═".repeat(70)}`);
+    console.log("");
+    console.log("  #  | REINS ID       | 物件名                       | Score | Status    | Time");
+    console.log("  " + "-".repeat(80));
+
+    let passCount = 0;
+    let totalScore = 0;
+    let scoredCount = 0;
+
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
-      const icon = r.status === "PASS" ? "✓" : r.status === "FAIL" ? "✗" : "?";
-      console.log(`  ${icon} ${r.reinsId} | ${(r.propertyName || "").slice(0, 20)} | ${r.score ?? "N/A"}/43 | OK:${r.filled || 0} IMG:${r.images || 0} TR:${r.transport || 0} TK:${r.tokucho || 0} | ${r.duration || 0}s`);
+      const name = (r.propertyName || "").slice(0, 24).padEnd(24);
+      const scoreStr = r.score !== null ? `${r.score}/43` : "  N/A";
+      const statusIcon = r.status === "PASS" ? "✓" : r.status === "FAIL" ? "✗" : r.status === "NOT_FOUND" ? "?" : "!";
+      const dur = r.duration ? `${r.duration}s` : "";
+      console.log(`  ${String(i + 1).padStart(2)} | ${r.reinsId} | ${name} | ${scoreStr.padStart(5)} | ${statusIcon} ${(r.status || "").padEnd(9)} | ${dur}`);
+
+      if (r.status === "PASS") passCount++;
+      if (r.score !== null) {
+        totalScore += r.score;
+        scoredCount++;
+      }
     }
-    const passCount = results.filter(r => r.status === "PASS").length;
-    const scored = results.filter(r => r.score !== null);
-    const avg = scored.length > 0 ? (scored.reduce((s, r) => s + r.score, 0) / scored.length).toFixed(1) : "N/A";
-    console.log(`\n  合格: ${passCount}/${PROPERTY_IDS.length} | 平均: ${avg}pt`);
+
+    console.log("  " + "-".repeat(80));
+    console.log(`  合格: ${passCount}/${PROPERTY_IDS.length} (40点以上)`);
+    if (scoredCount > 0) {
+      console.log(`  平均スコア: ${(totalScore / scoredCount).toFixed(1)}点`);
+    }
+    const failedIds = results.filter(r => r.status !== "PASS").map(r => r.reinsId);
+    if (failedIds.length > 0) {
+      console.log(`  不合格/エラー: ${failedIds.join(", ")}`);
+    }
     console.log(`${"═".repeat(70)}\n`);
+
+    // 結果をJSONで保存
+    const reportPath = path.join(os.homedir(), "Desktop", "suumo-nyuko", `batch-report-${Date.now()}.json`);
+    fs.writeFileSync(reportPath, JSON.stringify(results, null, 2));
+    console.log(`  レポート保存: ${reportPath}`);
 
   } catch (err) {
     console.error("Fatal:", err);

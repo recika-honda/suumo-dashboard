@@ -17,13 +17,13 @@
 const path = require("path");
 const fs = require("fs");
 
-const envPath = path.join(__dirname, "..", ".env.local");
+const envPath = path.join(__dirname, "..", "..", ".env.local");
 if (fs.existsSync(envPath)) {
   require("dotenv").config({ path: envPath });
 }
 
 const { chromium } = require("playwright");
-const reins = require("../skills/reins");
+const reins = require("../../skills/reins");
 
 // batch-nyuko は require すると main() が即走るため import しない。
 // 1物件分のパイプラインを skills を直接呼んで複製する（下で実装）。
@@ -35,7 +35,7 @@ if (!reinsId) {
 }
 
 const MAX_LOGIN_RETRIES = 3;
-const LOGS_DIR = path.join(__dirname, "..", "logs");
+const LOGS_DIR = path.join(__dirname, "..", "..", "logs");
 const RUNS_DIR = path.join(LOGS_DIR, "runs");
 const HISTORY_PATH = path.join(LOGS_DIR, "nyuko-history.jsonl");
 
@@ -101,11 +101,11 @@ function createRunLog(reinsId) {
 // 回避: batch-nyuko.js に main gate を追加するのが本筋。
 // ここでは batch-nyuko.js を require せず、skill を直接呼ぶ軽量版を定義する。
 
-const forrent = require("../skills/forrent");
-const { analyzeAndCropImages } = require("../skills/image-ai");
-const { generateTexts } = require("../skills/text-ai");
-const { checkImageSufficiency, fetchBukakuData } = require("../skills/bukaku");
-const { fetchShuhenPhotos } = require("../skills/google-images");
+const forrent = require("../../skills/forrent");
+const { analyzeAndCropImages } = require("../../skills/image-ai");
+const { generateTexts } = require("../../skills/text-ai");
+const { checkImageSufficiency, fetchBukakuData } = require("../../skills/bukaku");
+const { fetchShuhenPhotos } = require("../../skills/google-images");
 const os = require("os");
 
 // デフォルト headless。NYUKO_HEADED=1 でデバッグ用に画面表示。

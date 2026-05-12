@@ -17,16 +17,16 @@
 const path = require("path");
 const os = require("os");
 const fs = require("fs");
-require("dotenv").config({ path: path.join(__dirname, "..", ".env.local") });
+require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env.local") });
 
 const { chromium } = require("playwright");
-const reins = require("../skills/reins");
-const forrent = require("../skills/forrent");
-const { analyzeAndCropImages, cropMissingCategories } = require("../skills/image-ai");
-const { generateTexts } = require("../skills/text-ai");
-const { checkImageSufficiency, fetchBukakuImages } = require("../skills/bukaku-images");
-const { fetchShuhenPhotos } = require("../skills/google-images");
-const { readNayoseScore } = require("../skills/score-checker");
+const reins = require("../../skills/reins");
+const forrent = require("../../skills/forrent");
+const { analyzeAndCropImages, cropMissingCategories } = require("../../skills/image-ai");
+const { generateTexts } = require("../../skills/text-ai");
+const { checkImageSufficiency, fetchBukakuImages } = require("../../skills/bukaku-images");
+const { fetchShuhenPhotos } = require("../../skills/google-images");
+const { readNayoseScore } = require("../../skills/score-checker");
 
 // ── CLI args ──
 const args = process.argv.slice(2);

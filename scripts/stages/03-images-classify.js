@@ -54,6 +54,7 @@ async function runImagesClassify({
     return { initialCosts: null, images: [] };
   });
 
+  logStep("ai_classify_start", { count: downloaded?.length ?? 0 });
   let processedImages = await analyzeAndCropImages(downloaded, downloadDir);
   console.error(`  ${processedImages.length}枚分類完了`);
   logStep("images_classified", { count: processedImages.length });
@@ -68,6 +69,7 @@ async function runImagesClassify({
   const sufficiency = checkImageSufficiency(processedImages);
   if (sufficiency.insufficient && bukakuResult.images.length > 0) {
     console.error(`  [bukaku] 5ptカテゴリ不足 → 物確画像を分類中...`);
+    logStep("bukaku_supplement_start", { missing: sufficiency.missing5pt });
     try {
       const existingCats = processedImages.map((img) => img.categoryId);
       const bukakuProcessed = await analyzeAndCropImages(
@@ -84,6 +86,7 @@ async function runImagesClassify({
 
   // Shuhen photos (separate browser to avoid memory pressure)
   console.error("  [3.5/6] 周辺環境写真取得...");
+  logStep("shuhen_fetch_start");
   let shuhenBrowser;
   try {
     shuhenBrowser = await chromium.launch(launchOpts);

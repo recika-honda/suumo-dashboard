@@ -23,7 +23,9 @@ const STAGE = "02-images-download";
 async function runImagesDownload({ reinsPage, downloadDir, logStep, runDir }) {
   writeStageInput(runDir, STAGE, { downloadDir });
   console.error("  [2/6] 画像スクリーンショット...");
+  logStep("extract_image_meta_start");
   const imagesMeta = await reins.extractImageData(reinsPage);
+  logStep("screenshot_start", { count: imagesMeta.length });
   const downloaded = await reins.screenshotAllImages(reinsPage, imagesMeta, downloadDir);
   console.error(`  ${downloaded.length}枚取得`);
   logStep("images_downloaded", { count: downloaded.length });

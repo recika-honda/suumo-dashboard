@@ -7,12 +7,12 @@
 const path = require("path");
 const os = require("os");
 const fs = require("fs");
-require("dotenv").config({ path: path.join(__dirname, "..", ".env.local") });
+require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env.local") });
 
 const { chromium } = require("playwright");
-const forrent = require("../skills/forrent");
-const { analyzeAndCropImages } = require("../skills/image-ai");
-const { checkImageSufficiency, fetchBukakuImages } = require("../skills/bukaku-images");
+const forrent = require("../../skills/forrent");
+const { analyzeAndCropImages } = require("../../skills/image-ai");
+const { checkImageSufficiency, fetchBukakuImages } = require("../../skills/bukaku-images");
 
 // 物確対応3物件
 const TARGET_IDS = [

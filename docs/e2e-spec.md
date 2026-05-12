@@ -60,11 +60,11 @@
 
 ### Phase 1: Smoke Test (3 properties)
 - IDs: 100138227796, 100138229508, 100138234102
-- Command: `node scripts/e2e-test-15.js --phase smoke --fresh`
+- Command: `node scripts/legacy/e2e-test-15.js --phase smoke --fresh`
 - Pass: all 3 complete, 2/3 score >= 40
 
 ### Phase 2: Full Test (15 properties)
-- Command: `node scripts/e2e-test-15.js --fresh`
+- Command: `node scripts/legacy/e2e-test-15.js --fresh`
 - Pass:
   - 15/15 complete (no FATAL)
   - Pipeline errors total = 0
@@ -73,7 +73,7 @@
   - Individual score >= 40 for 13/15+
 
 ### Phase 3: Fix Verification
-- Command: `node scripts/e2e-test-15.js --ids <failed_ids> --fresh`
+- Command: `node scripts/legacy/e2e-test-15.js --ids <failed_ids> --fresh`
 - Pass: all score >= 40, errors = 0
 
 ---

@@ -34,7 +34,9 @@ const STAGE = "06-forrent-register";
 async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep }) {
   writeStageInput(runDir, STAGE, { hasForrentPage: !!forrentPage, hasMainFrame: !!mainFrame });
   console.error("  [6/6] 登録...");
+  logStep("register_start");
   let regResult = { saved: false, registrationType: null };
+  let exceptionMessage = null;
   try {
     regResult = await forrent.registerProperty(forrentPage, mainFrame, {
       artifactDir: runDir,
@@ -56,8 +58,9 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep }) {
       });
     }
   } catch (e) {
-    console.error(`  -> 登録エラー: ${e.message.slice(0, 100)}`);
-    logStep("register_exception", { error: e.message.slice(0, 300) });
+    exceptionMessage = e.message.slice(0, 200);
+    console.error(`  -> 登録エラー: ${exceptionMessage}`);
+    logStep("register_exception", { error: exceptionMessage });
   }
 
   const out = {
@@ -65,6 +68,7 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep }) {
     score: regResult.score || null,
     registrationType: regResult.registrationType,
     errors: regResult.errors || [],
+    exceptionMessage,
   };
   writeStageOutput(runDir, STAGE, out);
   return out;

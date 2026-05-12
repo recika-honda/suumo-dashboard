@@ -50,6 +50,7 @@ async function runForrentFill({
   console.error("  [5/6] forrent.jp入稿...");
   const forrentPage = await context.newPage();
 
+  logStep("forrent_login_start");
   const forrentOk = await forrent.login(forrentPage, {
     id: process.env.SUUMO_LOGIN_ID,
     pass: process.env.SUUMO_LOGIN_PASS,
@@ -62,14 +63,17 @@ async function runForrentFill({
     return out;
   }
 
+  logStep("navigate_form_start");
   let { mainFrame } = await forrent.navigateToNewProperty(forrentPage);
 
+  logStep("fill_property_form_start");
   const { filled, errors: formErrors } = await forrent.fillPropertyForm(
     mainFrame,
     reinsData,
     initialCostData
   );
 
+  logStep("fill_texts_start");
   const textErrors = await forrent.fillTexts(
     mainFrame,
     texts.catchCopy,
@@ -78,11 +82,14 @@ async function runForrentFill({
     initialCostData
   );
 
+  logStep("upload_images_start", { count: processedImages?.length ?? 0 });
   const { uploaded, errors: uploadErrors } = await forrent.uploadImages(
     mainFrame,
     processedImages
   );
+  logStep("fill_tokucho_start");
   const tokuchoResult = await forrent.fillTokucho(mainFrame, reinsData);
+  logStep("fill_transport_start");
   const transportResult = await forrent.fillTransportViaMap(
     forrentPage,
     mainFrame,
@@ -91,6 +98,7 @@ async function runForrentFill({
 
   mainFrame = forrentPage.frame({ name: "main" }) || mainFrame;
 
+  logStep("fill_shuhen_start");
   const shuhenResult = await forrent.fillShuhenKankyo(forrentPage, mainFrame);
   mainFrame = forrentPage.frame({ name: "main" }) || mainFrame;
 

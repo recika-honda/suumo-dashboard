@@ -1638,8 +1638,10 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCo
   const errors = [];
 
   // テキストを制限内にtruncate（フリーコメント=100文字、キャッチ=30文字）
-  const truncCatch = (catchCopy || "").slice(0, 30);
-  const truncComment = (freeComment || "").slice(0, 100);
+  // sanitizeForLength は改行 (LF/CRLF) を全角スペースに置換してから slice するので、
+  // AI が改行を含む文字列を返しても CRLF +1 char anti-pattern で REG_FAIL しない。
+  const truncCatch = sanitizeForLength(catchCopy, 30);
+  const truncComment = sanitizeForLength(freeComment, 100);
 
   // REINS備考情報から特記事項テキストを構築（全備考+フリースペース+一時金を結合して漏れ防止）
   // forrent.jpの備考欄は半角カナ・半角英数字・記号が禁止 → 全角変換
@@ -1650,6 +1652,9 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCo
   // 改行 (\n / \r\n) は forrent 送信時に CRLF に展開され、サーバ側「200文字以内」
   // バリデータが 1 改行 = 2 文字としてカウントするため、slice 前に全角スペースへ置換する。
   // (再現済み: 100138979162 / 100139003800 の REG_FAIL — 200 → 201 として弾かれた)
+  // 注: ここは sanitizeForLength を使わず inline で書いている。biko は forrent 備考欄
+  //     (半角カナ・半角英数字禁止) なので toFullWidth が前段に必須。汎用 sanitizeForLength
+  //     には全角化を入れていない (catchCopy 等 AI 出力の半角英数を保持したい経路があるため)。
   const biko = toFullWidth(bikoRaw).replace(/[\r\n]+/g, "　").slice(0, 200);
 
   // Build cost item descriptions for etcHiyoShosai
@@ -1665,12 +1670,28 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCo
   }
 
   // Fixed text for net-facing fields (staff request)
-  const NET_CATCH = "お電話番号記載のお客様限定【仲介手数料割引キャンペーン中】";
-  const NET_FREE_MEMO = "お急ぎやご質問の方はファンテイズ03-6403-9323大木まで！現地お待ち合わせでご紹介できます！(他社掲載物件まとめて内見可能)家賃交渉、初期費用の相談などお気軽にご相談下さい！";
+  // sanitize 経由で構築 → 将来この文言が AI 化 / 設定値化されても CRLF anti-pattern を踏まない
+  const NET_CATCH = sanitizeForLength("お電話番号記載のお客様限定【仲介手数料割引キャンペーン中】", 30);
+  const NET_FREE_MEMO = sanitizeForLength("お急ぎやご質問の方はファンテイズ03-6403-9323大木まで！現地お待ち合わせでご紹介できます！(他社掲載物件まとめて内見可能)家賃交渉、初期費用の相談などお気軽にご相談下さい！", 200);
+
+  // etcHiyoShosai 用テキストを Node.js 側で構築 (evaluate 内重複ロジックの排除と sanitize 経由の徹底)
+  let etcTextRaw = "鍵交換代・その他初期費用";
+  if (costItems.length > 0) {
+    etcTextRaw = costItems.join("、");
+  } else if (biko) {
+    const costKeywords = ["鍵交換", "消毒", "クリーニング", "保険", "損保", "火災", "初期費用",
+      "鍵代", "消臭", "室内清掃", "安心サポート", "入居サポート", "24時間サポート",
+      "抗菌", "害虫駆除", "仲介手数料", "事務手数料", "書類作成", "契約事務",
+      "サポート代", "サポート費", "保証料", "更新料", "更新事務"];
+    const sentences = biko.split(/[、。\n]+/).map(s => s.trim()).filter(Boolean);
+    const costParts = sentences.filter(s => costKeywords.some(k => s.includes(k)));
+    if (costParts.length > 0) etcTextRaw = costParts.join("、");
+  }
+  const etcHiyoText = sanitizeForLength(etcTextRaw, 200);
 
   // evaluate() で直接 DOM 操作（フレーム状態に左右されにくい）
   try {
-    const result = await mainFrame.evaluate(({ catchCopy, freeComment, biko, netCatch, netFreeMemo, costItems }) => {
+    const result = await mainFrame.evaluate(({ catchCopy, freeComment, biko, netCatch, netFreeMemo, etcHiyoText }) => {
       const out = [];
       const fields = [
         { id: "bukkenCatch", val: catchCopy },
@@ -1696,26 +1717,10 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCo
         }
       }
       // name属性でしかアクセスできないtextarea（IDなし）
-      // etcHiyoShosai: etcHiyoFlg=ON時に必須
+      // etcHiyoShosai: etcHiyoFlg=ON時に必須 (構築は Node.js 側で sanitize 経由で実施済み)
       // hoshoninDaikoShosai: 保証人代行会社の詳細
       const nameFields = [];
-      // Extract initial cost-related text from biko or 物確 structured data
-      let etcText = '鍵交換代・その他初期費用';
-      if (costItems && costItems.length > 0) {
-        // 物確 structured: list each item with amount
-        etcText = costItems.join('、');
-      } else if (biko) {
-        const costKeywords = ['鍵交換', '消毒', 'クリーニング', '保険', '損保', '火災', '初期費用',
-          '鍵代', '消臭', '室内清掃', '安心サポート', '入居サポート', '24時間サポート',
-          '抗菌', '害虫駆除', '仲介手数料', '事務手数料', '書類作成', '契約事務',
-          'サポート代', 'サポート費', '保証料', '更新料', '更新事務'];
-        const sentences = biko.split(/[、。\n]+/).map(s => s.trim()).filter(Boolean);
-        const costParts = sentences.filter(s => costKeywords.some(k => s.includes(k)));
-        if (costParts.length > 0) {
-          etcText = costParts.join('、');
-        }
-      }
-      nameFields.push({ name: '${bukkenInputForm.etcHiyoShosai}', val: etcText.slice(0, 200), label: 'etcHiyoShosai' });
+      nameFields.push({ name: '${bukkenInputForm.etcHiyoShosai}', val: etcHiyoText, label: 'etcHiyoShosai' });
       // hoshoninDaikoShosai is now set in fillFormFields (section 19)
       for (const nf of nameFields) {
         const el = document.querySelector('[name="' + nf.name + '"]');
@@ -1729,7 +1734,7 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCo
         }
       }
       return out;
-    }, { catchCopy: truncCatch, freeComment: truncComment, biko, netCatch: NET_CATCH, netFreeMemo: NET_FREE_MEMO, costItems });
+    }, { catchCopy: truncCatch, freeComment: truncComment, biko, netCatch: NET_CATCH, netFreeMemo: NET_FREE_MEMO, etcHiyoText });
 
     const ok = result.filter(r => !r.startsWith("!"));
     const ng = result.filter(r => r.startsWith("!")).map(r => r.slice(1));
@@ -2824,6 +2829,20 @@ function toFullWidth(str) {
 }
 
 /**
+ * 文字数制限のある forrent フィールド向け sanitizer。
+ * 改行 (LF/CRLF) を全角スペースに置換してから slice する。
+ * HTML form 送信時に textarea の \n は \r\n に展開されるため、
+ * ローカルで slice(0, N) しても改行を含むとサーバ側で N+1 char 扱いになり
+ * 「N 文字以内」バリデーションで弾かれる anti-pattern を予防する。
+ * 長さ制限のある全フィールド (catchCopy / freeComment / netCatch / netFreeMemo / etcHiyoShosai 等) で必ず通すこと。
+ */
+function sanitizeForLength(text, maxLen) {
+  if (!maxLen || maxLen <= 0) return "";
+  if (typeof text !== "string") return "";
+  return text.replace(/[\r\n]+/g, "　").slice(0, maxLen);
+}
+
+/**
  * バリデーション情報を確認画面のフレームから収集する。
  * 「エラー 一覧」見出しだけでなく、内側のリスト項目・フィールド別メッセージ・
  * 赤字警告などを網羅的に拾って `errors[]` と `errorSectionText` に集約する。
@@ -3113,4 +3132,5 @@ module.exports = {
   registerProperty,
   checkRequiredFromReinsData,
   validateBySpec,
+  sanitizeForLength,
 };

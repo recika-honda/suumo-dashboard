@@ -16,12 +16,12 @@
 
 const path = require("path");
 const fs = require("fs");
-require("dotenv").config({ path: path.join(__dirname, "..", ".env.local") });
+require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env.local") });
 
 const { chromium } = require("playwright");
 const { Client } = require("@notionhq/client");
-const forrent = require("../skills/forrent");
-const reader = require("../skills/forrent-reader");
+const forrent = require("../../skills/forrent");
+const reader = require("../../skills/forrent-reader");
 
 const APPLY = process.argv.includes("--apply");
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
@@ -195,7 +195,7 @@ async function applyStatus(pageId, statusName) {
   }
 
   // Save raw debug dump
-  const debugDir = path.join(__dirname, "..", "logs");
+  const debugDir = path.join(__dirname, "..", "..", "logs");
   fs.mkdirSync(debugDir, { recursive: true });
   fs.writeFileSync(
     path.join(debugDir, "forrent-list-snapshot.json"),

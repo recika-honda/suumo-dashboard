@@ -19,6 +19,7 @@ const STAGE = "04-texts-generate";
 async function runTextsGenerate({ reinsData, logStep, runDir }) {
   writeStageInput(runDir, STAGE, { reinsData });
   console.error("  [4/6] AIテキスト生成...");
+  logStep("text_ai_start");
   const texts = await generateTexts(reinsData);
   console.error(`  キャッチ: "${texts.catchCopy}"`);
   logStep("texts_generated", {

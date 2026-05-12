@@ -65,8 +65,20 @@ const tests = [
     expectOk: true,
   },
   {
+    name: "マンション 使用部分面積 missing → REG_FAIL",
+    data: { 建物名: "テスト", 物件種目: "マンション", 部屋番号: "101" },
+    expectOk: false,
+    expectField: "使用部分面積",
+    expectReason: "REINSデータに面積（使用部分面積）がありません",
+  },
+  {
+    name: "戸建 使用部分面積 missing → OK (appliesTo フィルタ)",
+    data: { 建物名: "テスト", 物件種目: "一戸建て" },
+    expectOk: true,
+  },
+  {
     name: "全 field 揃う → OK",
-    data: { 建物名: "テストマンション", 物件種目: "マンション", 部屋番号: "101" },
+    data: { 建物名: "テストマンション", 物件種目: "マンション", 部屋番号: "101", 使用部分面積: "30.5㎡" },
     expectOk: true,
   },
 ];

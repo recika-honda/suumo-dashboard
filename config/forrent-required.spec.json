@@ -1,0 +1,19 @@
+{
+  "$comment": "forrent.jp の REINS データ早期 validation ルール。新しい必須項目を踏んだら fields に 1 entry 追加するだけで早期 REG_FAIL ショートサーキットが有効になる。skills/forrent.js#validateBySpec が evaluator。",
+  "fields": [
+    {
+      "key": "建物名",
+      "label": "建物名",
+      "appliesTo": "ALL",
+      "rejectReason": "REINSデータに建物名がありません",
+      "$comment": "全物件種目で forrent サーバ側必須。空文字/全空白/null/undefined すべて欠落扱い (validateBySpec が trim + falsy check)"
+    },
+    {
+      "key": "部屋番号",
+      "label": "部屋番号",
+      "appliesTo": { "物件種目": ["マンション", "アパート"] },
+      "rejectReason": "REINSデータに部屋番号がありません",
+      "$comment": "マンション・アパート限定で必須。戸建/タウンハウス等では required ではない"
+    }
+  ]
+}

@@ -63,6 +63,86 @@ function resolvePropertyTypeCode(shumoku) {
   return null;
 }
 
+/**
+ * spec を使って reinsData の必須項目をバリデートする汎用 evaluator。
+ *
+ * spec 形式 (config/forrent-required.spec.json):
+ *   {
+ *     "fields": [
+ *       {
+ *         "key": "建物名",                      // reinsData の field name
+ *         "appliesTo": "ALL",                  // または { "<key>": ["値1", "値2"] }
+ *         "rejectReason": "..."                // missingField 時に返す reason
+ *       }
+ *     ]
+ *   }
+ *
+ * 値の欠落判定は `trim + falsy` で統一 (空文字 / 全空白 / null / undefined を欠落扱い)。
+ * 元コードでは 建物名 のみ trim していたが、spec 化に伴い 部屋番号 にも適用される
+ * (より strict な方向の小さな挙動変更、forrent サーバ側でどちらにせよ弾かれる)。
+ *
+ * @param {object} reinsData
+ * @param {object} spec - config/forrent-required.spec.json の中身
+ * @returns {{ok: true} | {ok: false, missingField: string, reason: string}}
+ */
+function validateBySpec(reinsData, spec) {
+  if (!spec || !Array.isArray(spec.fields)) return { ok: true };
+
+  for (const field of spec.fields) {
+    if (!appliesToMatches(field.appliesTo, reinsData)) continue;
+    const value = reinsData[field.key];
+    const trimmed = value ? String(value).trim() : "";
+    if (!trimmed) {
+      return {
+        ok: false,
+        missingField: field.key,
+        reason: field.rejectReason,
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * spec の appliesTo 条件が reinsData にマッチするか判定。
+ *  - "ALL"                            → 常にマッチ
+ *  - { "物件種目": ["マンション"] }   → reinsData.物件種目 が配列に含まれるならマッチ
+ */
+function appliesToMatches(appliesTo, reinsData) {
+  if (appliesTo === "ALL") return true;
+  if (!appliesTo || typeof appliesTo !== "object") {
+    console.warn(`[forrent.spec] malformed appliesTo: ${JSON.stringify(appliesTo)} → skipped`);
+    return false;
+  }
+  // 複数キーは AND 合成 (将来 OR が必要なら spec を `[{...}, {...}]` 形式にする)
+  for (const [key, allowedValues] of Object.entries(appliesTo)) {
+    if (!Array.isArray(allowedValues)) {
+      console.warn(
+        `[forrent.spec] malformed appliesTo entry "${key}": expected array, got ${typeof allowedValues} → skipped`
+      );
+      return false;
+    }
+    if (!allowedValues.includes(reinsData[key])) return false;
+  }
+  return true;
+}
+
+const REQUIRED_SPEC = require("../config/forrent-required.spec.json");
+
+/**
+ * REINS から抽出した物件データが forrent.jp の必須項目を満たすかチェックする。
+ *
+ * 実装はすべて `validateBySpec` + `config/forrent-required.spec.json` に集約。
+ * 新しい必須項目を踏んだら spec JSON に 1 entry 追加するだけで早期ショートサーキットが
+ * 有効になる (skills/forrent.js のコードは触らない)。
+ *
+ * @param {object} reinsData
+ * @returns {{ok: true} | {ok: false, missingField: string, reason: string}}
+ */
+function checkRequiredFromReinsData(reinsData) {
+  return validateBySpec(reinsData, REQUIRED_SPEC);
+}
+
 // 構造 code
 const STRUCTURE_CODE = {
   RC: "01", ＲＣ: "01", 鉄筋コンクリート: "01", "鉄筋コン": "01",
@@ -2661,6 +2741,36 @@ async function fillShuhenKankyo(page, mainFrame) {
   return { filled, errors };
 }
 
+/**
+ * 周辺環境ポップアップが書き込んだ施設名 (`shuhenKankyoNm[i]`) を
+ * 旧フォーム側の `destination${i+1}` フィールドにコピー同期する。
+ *
+ * forrent 自身が用意している周辺環境入力ポップアップは、施設名を
+ * `bukkenInputForm.shuhenKankyoInputForm[i].shuhenKankyoNm` に書き込むが、
+ * 一部経路で表示用の `destination${i+1}` 側が空のままになる事例があるため、
+ * mainFrame 側で手動同期する。
+ *
+ * non-critical: 失敗しても入稿は継続する (catch 内は何もしない)。
+ */
+async function syncShuhenDestinationFields(forrentPage, mainFrame) {
+  try {
+    await mainFrame.evaluate(() => {
+      for (let i = 0; i < 6; i++) {
+        const nameEl = document.querySelector(
+          `input[name="bukkenInputForm.shuhenKankyoInputForm[${i}].shuhenKankyoNm"]`
+        );
+        const destEl = document.getElementById(`destination${i + 1}`);
+        if (nameEl && nameEl.value && destEl) {
+          destEl.value = nameEl.value;
+          destEl.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      }
+    });
+  } catch (e) {
+    // Non-critical
+  }
+}
+
 // ── Utilities ──
 
 function norm(str) {
@@ -2999,5 +3109,8 @@ module.exports = {
   uploadImages,
   fillTokucho,
   fillShuhenKankyo,
+  syncShuhenDestinationFields,
   registerProperty,
+  checkRequiredFromReinsData,
+  validateBySpec,
 };

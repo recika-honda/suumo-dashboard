@@ -25,12 +25,14 @@ if (fs.existsSync(envPath)) {
 const { chromium } = require("playwright");
 const { Client: NotionClient } = require("@notionhq/client");
 const reins = require("../skills/reins");
-const forrent = require("../skills/forrent");
-const { analyzeAndCropImages } = require("../skills/image-ai");
-const { generateTexts } = require("../skills/text-ai");
-const { checkImageSufficiency, fetchBukakuData } = require("../skills/bukaku");
-const { fetchShuhenPhotos } = require("../skills/google-images");
 const slack = require("../skills/slack");
+const { resolveNotionStatus } = require("./pipeline-statuses");
+const { runReinsExtract } = require("./stages/01-reins-extract");
+const { runImagesDownload } = require("./stages/02-images-download");
+const { runImagesClassify } = require("./stages/03-images-classify");
+const { runTextsGenerate } = require("./stages/04-texts-generate");
+const { runForrentFill } = require("./stages/05-forrent-fill");
+const { runForrentRegister } = require("./stages/06-forrent-register");
 
 const notion = new NotionClient({ auth: process.env.NOTION_TOKEN });
 const DB_ID = process.env.NOTION_DATABASE_ID;
@@ -163,280 +165,82 @@ async function loginReins(page) {
   return false;
 }
 
+function printRunHeader(reinsId, index, total) {
+  console.error(`\n${"━".repeat(50)}`);
+  console.error(`  [${index + 1}/${total}] ${reinsId}`);
+  console.error(`${"━".repeat(50)}`);
+}
+
 // ── Process single property (full pipeline) ──────────────
+// 各 stage は scripts/stages/ 配下。設計: docs/refactor/stages.md
+// 不変条件 (contract.md §8): Step 1-4 例外は伝播 → main で TIMEOUT、
+// Step 5-6 例外は内部 try-catch で ERROR ラベルに変換。
 async function processProperty(context, reinsPage, reinsId, index, total, runLog) {
   const downloadDir = path.join(os.homedir(), "Desktop", "suumo-nyuko", reinsId);
   fs.mkdirSync(downloadDir, { recursive: true });
-
-  const label = `[${index + 1}/${total}] ${reinsId}`;
-  console.error(`\n${"━".repeat(50)}`);
-  console.error(`  ${label}`);
-  console.error(`${"━".repeat(50)}`);
+  printRunHeader(reinsId, index, total);
 
   const logStep = runLog ? runLog.step : () => {};
+  const runDir = runLog ? runLog.dir : undefined;
 
-  // ── Step 1: REINS data extraction ──
-  if (index > 0) {
-    await reinsPage.goto("https://system.reins.jp/main/KG/GKG003100", {
-      waitUntil: "networkidle",
-      timeout: 20000,
-    });
-    await reinsPage.waitForTimeout(3000);
+  // ── Step 1-4: try 外。例外は伝播 → main の Promise.race catch で TIMEOUT ──
+  const r1 = await runReinsExtract({ reinsPage, reinsId, index, logStep, runDir });
+  if (r1.status === "NOT_FOUND") return { reinsId, status: "NOT_FOUND", propertyName: "N/A" };
+  if (r1.status === "REG_FAIL") {
+    return { reinsId, status: "REG_FAIL", propertyName: r1.propertyName, reason: r1.reason };
   }
+  const reinsData = r1.reinsData;
+  if (runLog) runLog.data.propertyName = r1.propertyName;
 
-  console.error("  [1/6] REINS検索...");
-  logStep("reins_search_start");
-  const found = await reins.searchByNumber(reinsPage, reinsId);
-  if (!found) {
-    console.error("  -> 物件が見つかりませんでした");
-    logStep("reins_search_not_found");
-    return { reinsId, status: "NOT_FOUND", propertyName: "N/A" };
-  }
-
-  const reinsData = await reins.extractPropertyData(reinsPage);
-  console.error(`  物件名: ${reinsData.建物名}`);
-  logStep("reins_extracted", { propertyName: reinsData.建物名, fieldCount: Object.keys(reinsData).length });
-  if (runLog) {
-    runLog.data.propertyName = reinsData.建物名;
-    try {
-      fs.writeFileSync(path.join(runLog.dir, "reins-data.json"), JSON.stringify(reinsData, null, 2));
-    } catch {}
-  }
-
-  // ── 早期バリデーション: forrent.jp 必須項目欠落のショートサーキット ──
-
-  // 物件名 (建物名) は全物件種目で forrent サーバ側必須。空ならば即 REG_FAIL。
-  // (再現済み: 100139015499 — REINS 抽出で建物名 None / forrent「物件名を入力して下さい」)
-  const buildingName = reinsData.建物名 ? String(reinsData.建物名).trim() : "";
-  if (!buildingName) {
-    console.error("  -> 建物名未取得（forrent必須） → REG_FAIL早期確定");
-    logStep("missing_required_field", { field: "建物名", 物件種目: reinsData.物件種目 });
-    return {
-      reinsId,
-      status: "REG_FAIL",
-      propertyName: reinsId,
-      reason: "REINSデータに建物名がありません",
-    };
-  }
-
-  // 部屋番号は マンション/アパート で forrent サーバ側必須。REINS から取れていない場合、
-  // 画像取得・AI 分類・ブラウザ起動を一切行わず REG_FAIL として入稿失敗に流す。
-  const requiresHeyaNo = ["マンション", "アパート"].includes(reinsData.物件種目);
-  if (requiresHeyaNo && !reinsData.部屋番号) {
-    console.error("  -> 部屋番号未取得（forrent必須） → REG_FAIL早期確定");
-    logStep("missing_required_field", { field: "部屋番号", 物件種目: reinsData.物件種目 });
-    return {
-      reinsId,
-      status: "REG_FAIL",
-      propertyName: reinsData.建物名,
-      reason: "REINSデータに部屋番号がありません",
-    };
-  }
-
-  // ── Step 2: Images ──
-  console.error("  [2/6] 画像スクリーンショット...");
-  const imagesMeta = await reins.extractImageData(reinsPage);
-  const downloaded = await reins.screenshotAllImages(reinsPage, imagesMeta, downloadDir);
-  console.error(`  ${downloaded.length}枚取得`);
-  logStep("images_downloaded", { count: downloaded.length });
-
-  // ── Step 3: AI image classification + bukaku + shuhen ──
-  console.error("  [3/6] AI画像分類...");
-
-  // Start bukaku fetch in parallel
-  const bukakuDataPromise = fetchBukakuData(context, reinsData, downloadDir).catch((e) => {
-    console.error(`  [bukaku] Error (non-blocking): ${e.message}`);
-    return { initialCosts: null, images: [] };
+  const r2 = await runImagesDownload({ reinsPage, downloadDir, logStep, runDir });
+  const r3 = await runImagesClassify({
+    context, reinsData, downloaded: r2.downloaded, downloadDir, logStep,
+    launchOpts: LAUNCH_OPTS, runDir,
   });
+  const texts = await runTextsGenerate({ reinsData, logStep, runDir });
 
-  let processedImages = await analyzeAndCropImages(downloaded, downloadDir);
-  console.error(`  ${processedImages.length}枚分類完了`);
-  logStep("images_classified", { count: processedImages.length });
-
-  // Bukaku supplementary images
-  const bukakuResult = await bukakuDataPromise;
-  const initialCostData = bukakuResult.initialCosts;
-  if (initialCostData) {
-    console.error(`  [bukaku] 初期費用: ${Object.keys(initialCostData).length}項目`);
-  }
-
-  const sufficiency = checkImageSufficiency(processedImages);
-  if (sufficiency.insufficient && bukakuResult.images.length > 0) {
-    console.error(`  [bukaku] 5ptカテゴリ不足 → 物確画像を分類中...`);
-    try {
-      const existingCats = processedImages.map((img) => img.categoryId);
-      const bukakuProcessed = await analyzeAndCropImages(bukakuResult.images, downloadDir, existingCats);
-      processedImages.push(...bukakuProcessed);
-      console.error(`  物確: ${bukakuProcessed.length}枚追加`);
-    } catch (e) {
-      console.error(`  [bukaku] Image classification error: ${e.message}`);
-    }
-  }
-
-  // Shuhen photos (separate browser to avoid memory pressure)
-  console.error("  [3.5/6] 周辺環境写真取得...");
-  let shuhenBrowser;
+  // ── Step 5-6: try で覆い、例外は ERROR ラベル ──
+  let r5;
   try {
-    shuhenBrowser = await chromium.launch(LAUNCH_OPTS);
-    const shuhenContext = await shuhenBrowser.newContext({ viewport: { width: 1280, height: 900 } });
-    const shuhenPhotos = await fetchShuhenPhotos(shuhenContext, reinsData, downloadDir);
-    if (shuhenPhotos.length > 0) {
-      for (const photo of shuhenPhotos) {
-        processedImages.push({
-          localPath: photo.localPath,
-          categoryId: "SH",
-          categoryLabel: "周辺環境",
-          facilityType: photo.facilityType,
-          facilityName: photo.facilityName,
-          sourceIndex: 200 + shuhenPhotos.indexOf(photo),
-        });
-      }
-      console.error(`  周辺環境: ${shuhenPhotos.length}枚追加`);
-    }
-  } catch (e) {
-    console.error(`  [shuhen] Error: ${e.message}`);
-  } finally {
-    if (shuhenBrowser) await shuhenBrowser.close().catch(() => {});
-  }
-
-  // ── Step 4: AI text generation ──
-  console.error("  [4/6] AIテキスト生成...");
-  const texts = await generateTexts(reinsData);
-  console.error(`  キャッチ: "${texts.catchCopy}"`);
-  logStep("texts_generated", { catchCopy: texts.catchCopy, hasFreeComment: !!texts.freeComment });
-
-  // ── Step 5: forrent.jp submission ──
-  console.error("  [5/6] forrent.jp入稿...");
-  const forrentPage = await context.newPage();
-
-  try {
-    const forrentOk = await forrent.login(forrentPage, {
-      id: process.env.SUUMO_LOGIN_ID,
-      pass: process.env.SUUMO_LOGIN_PASS,
+    r5 = await runForrentFill({
+      context, reinsData,
+      processedImages: r3.processedImages,
+      initialCostData: r3.initialCostData,
+      texts, logStep, runDir,
     });
-    if (!forrentOk) {
-      console.error("  -> forrent.jpログイン失敗");
-      await forrentPage.close();
+    if (r5.status === "FORRENT_LOGIN_FAIL") {
       return { reinsId, status: "FORRENT_LOGIN_FAIL", propertyName: reinsData.建物名 };
     }
 
-    let { mainFrame } = await forrent.navigateToNewProperty(forrentPage);
-
-    const { filled, errors: formErrors } = await forrent.fillPropertyForm(
-      mainFrame,
-      reinsData,
-      initialCostData
-    );
-
-    const textErrors = await forrent.fillTexts(
-      mainFrame,
-      texts.catchCopy,
-      texts.freeComment,
-      reinsData,
-      initialCostData
-    );
-
-    const { uploaded, errors: uploadErrors } = await forrent.uploadImages(mainFrame, processedImages);
-    const tokuchoResult = await forrent.fillTokucho(mainFrame, reinsData);
-    const transportResult = await forrent.fillTransportViaMap(forrentPage, mainFrame, reinsData.交通);
-
-    mainFrame = forrentPage.frame({ name: "main" }) || mainFrame;
-
-    const shuhenResult = await forrent.fillShuhenKankyo(forrentPage, mainFrame);
-    mainFrame = forrentPage.frame({ name: "main" }) || mainFrame;
-
-    // Sync shuhen facility names
-    try {
-      await mainFrame.evaluate(() => {
-        for (let i = 0; i < 6; i++) {
-          const nameEl = document.querySelector(
-            `input[name="bukkenInputForm.shuhenKankyoInputForm[${i}].shuhenKankyoNm"]`
-          );
-          const destEl = document.getElementById(`destination${i + 1}`);
-          if (nameEl && nameEl.value && destEl) {
-            destEl.value = nameEl.value;
-            destEl.dispatchEvent(new Event("input", { bubbles: true }));
-          }
-        }
-      });
-    } catch (e) {
-      // Non-critical
-    }
-
-    const allErrors = [
-      ...formErrors,
-      ...transportResult.errors,
-      ...textErrors,
-      ...uploadErrors,
-      ...shuhenResult.errors,
-    ];
-
-    console.error(
-      `  入力: ${Object.keys(filled).length}件, 画像: ${uploaded.length}枚, 交通: ${transportResult.filled.length}件, 周辺: ${shuhenResult.filled.length}件`
-    );
-    logStep("form_filled", {
-      filledFields: Object.keys(filled).length,
-      uploadedImages: uploaded.length,
-      transport: transportResult.filled.length,
-      shuhen: shuhenResult.filled.length,
-      formFillErrors: allErrors.length,
+    const r6 = await runForrentRegister({
+      forrentPage: r5.forrentPage, mainFrame: r5.mainFrame,
+      runDir, logStep,
     });
-
-    // ── Step 6: Register (actual save) ──
-    console.error("  [6/6] 登録...");
-    let regResult = { saved: false, registrationType: null };
-    try {
-      regResult = await forrent.registerProperty(forrentPage, mainFrame, {
-        artifactDir: runLog ? runLog.dir : undefined,
-      });
-      if (regResult.saved) {
-        const scoreText = regResult.score ? ` (${regResult.score}pt/43pt)` : "";
-        console.error(`  -> ${regResult.registrationType}完了${scoreText}`);
-        logStep("register_success", { score: regResult.score });
-      } else {
-        const firstErr = (regResult.errors || [])[0] || regResult.error || "不明";
-        console.error(`  -> 登録失敗: ${firstErr}`);
-        if (regResult.errors && regResult.errors.length) {
-          for (const e of regResult.errors.slice(0, 8)) console.error(`       - ${e}`);
-        }
-        logStep("register_failed", {
-          error: regResult.error || null,
-          errors: regResult.errors || [],
-          score: regResult.score || null,
-        });
-      }
-    } catch (e) {
-      console.error(`  -> 登録エラー: ${e.message.slice(0, 100)}`);
-      logStep("register_exception", { error: e.message.slice(0, 300) });
-    }
-
-    await forrentPage.close();
 
     return {
       reinsId,
       propertyName: reinsData.建物名 || reinsId,
-      status: regResult.saved ? "SUCCESS" : "REG_FAIL",
-      score: regResult.score || null,
-      registrationType: regResult.registrationType,
-      filledFields: Object.keys(filled).length,
-      uploadedImages: uploaded.length,
-      transport: transportResult.filled.length,
-      shuhen: shuhenResult.filled.length,
-      errors: regResult.errors || [],
-      formFillErrors: allErrors.length,
+      status: r6.status,
+      score: r6.score,
+      registrationType: r6.registrationType,
+      filledFields: Object.keys(r5.filled).length,
+      uploadedImages: r5.uploaded.length,
+      transport: r5.transport.filled.length,
+      shuhen: r5.shuhen.filled.length,
+      errors: r6.errors,
+      formFillErrors: r5.allErrors.length,
     };
   } catch (err) {
     console.error(`  -> エラー: ${err.message.slice(0, 150)}`);
     logStep("pipeline_exception", { error: err.message.slice(0, 300) });
-    try {
-      await forrentPage.close();
-    } catch {}
     return {
       reinsId,
       propertyName: reinsData?.建物名 || reinsId,
       status: "ERROR",
       error: err.message.slice(0, 200),
     };
+  } finally {
+    await r5?.forrentPage?.close().catch(() => {});
   }
 }
 
@@ -526,17 +330,28 @@ async function main() {
       registrationType: result.registrationType || null,
     });
 
-    // Update Notion status + notify Slack on success
-    if (result.status === "SUCCESS") {
+    // Notion 遷移: 遷移先 (掲載保留 / 入稿失敗 / null=広告待ち維持) は
+    // resolveNotionStatus に集約 (scripts/pipeline-statuses.js)。
+    // null は transient 失敗 (FORRENT_LOGIN_FAIL / TIMEOUT / ERROR) で
+    // 「広告待ち」のまま次サイクルでリトライさせる。
+    const notionStatus = resolveNotionStatus(result.status);
+    if (notionStatus) {
       try {
-        await updateNotionStatus(pageId, "掲載保留");
-        console.error(`  [notion] Status → 掲載保留`);
-        succeeded++;
+        await updateNotionStatus(pageId, notionStatus);
+        if (result.status === "SUCCESS") {
+          console.error(`  [notion] Status → ${notionStatus}`);
+        } else {
+          console.error(`  [notion] Status → ${notionStatus} (${result.status})`);
+        }
       } catch (e) {
         console.error(`  [notion] Status更新失敗: ${e.message}`);
-        result.notionUpdateFailed = true;
+        if (result.status === "SUCCESS") result.notionUpdateFailed = true;
       }
+    }
 
+    // Slack 通知 + succeeded/failed カウント
+    if (result.status === "SUCCESS") {
+      succeeded++;
       try {
         const r = await slack.notifyNyukoSuccess({
           reinsId: result.reinsId,
@@ -550,22 +365,6 @@ async function main() {
       }
     } else {
       failed++;
-
-      // データ系失敗は「入稿失敗」にフリップして retry loop を止める。
-      //  - REG_FAIL (バリデーションで蹴られた)
-      //  - NOT_FOUND (REINS で該当物件なし)
-      // 以下は transient とみなし、広告待ちのまま次サイクルで再試行:
-      //  - TIMEOUT, ERROR, FORRENT_LOGIN_FAIL
-      const dataLevelFailure = result.status === "REG_FAIL" || result.status === "NOT_FOUND";
-      if (dataLevelFailure) {
-        try {
-          await updateNotionStatus(pageId, "入稿失敗");
-          console.error(`  [notion] Status → 入稿失敗 (${result.status})`);
-        } catch (e) {
-          console.error(`  [notion] Status更新失敗: ${e.message}`);
-        }
-      }
-
       try {
         await slack.notifyError({
           reinsId: result.reinsId,

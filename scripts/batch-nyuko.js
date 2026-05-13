@@ -416,4 +416,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { processProperty, createRunLog };
+module.exports = { processProperty, createRunLog, loginReins };

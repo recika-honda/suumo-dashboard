@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SUUMO 入稿</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>SUUMO 入稿</h1>
+
+  <section>
+    <h2>1. 新規入稿</h2>
+    <form id="run-form">
+      <input type="text" id="reinsId" inputmode="numeric" pattern="\d+"
+             placeholder="REINS 物件番号 (数字のみ)" required autocomplete="off">
+      <button type="submit">入稿実行</button>
+    </form>
+  </section>
+
+  <section id="progress-section" hidden>
+    <h2>2. 進捗</h2>
+    <p id="progress-runid" class="muted"></p>
+    <ol id="progress-steps"></ol>
+    <p id="progress-result"></p>
+  </section>
+
+  <section>
+    <h2>3. 履歴 (最新 50 件)</h2>
+    <ul id="history-list"><li class="muted">読み込み中...</li></ul>
+  </section>
+</main>
+
+<script>
+const form           = document.getElementById('run-form');
+const reinsIdInput   = document.getElementById('reinsId');
+const submitBtn      = form.querySelector('button');
+const progressSection= document.getElementById('progress-section');
+const progressRunid  = document.getElementById('progress-runid');
+const progressSteps  = document.getElementById('progress-steps');
+const progressResult = document.getElementById('progress-result');
+const historyList    = document.getElementById('history-list');
+
+let pollTimer = null;
+
+form.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const reinsId = reinsIdInput.value.trim();
+  if (!/^\d+$/.test(reinsId)) return;
+
+  progressSection.hidden = false;
+  progressRunid.textContent  = '起動中...';
+  progressSteps.innerHTML    = '';
+  progressResult.textContent = '';
+  submitBtn.disabled = true;
+
+  try {
+    const resp = await fetch('/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reinsId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.runId) {
+      progressResult.textContent = 'エラー: ' + (data.error || 'unknown');
+      submitBtn.disabled = false;
+      return;
+    }
+    progressRunid.textContent = 'runId: ' + data.runId;
+    startPolling(data.runId);
+  } catch (e) {
+    progressResult.textContent = '通信エラー: ' + e.message;
+    submitBtn.disabled = false;
+  }
+});
+
+function startPolling(runId) {
+  if (pollTimer) clearInterval(pollTimer);
+  let lastIdx = -1;
+  pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch('/status/' + encodeURIComponent(runId));
+      if (!r.ok) return;
+      const data = await r.json();
+      const steps = data.steps || [];
+      for (let i = lastIdx + 1; i < steps.length; i++) {
+        const li = document.createElement('li');
+        const extra = steps[i].error ? ' — ' + steps[i].error.slice(0, 80)
+                    : steps[i].count != null ? ' (' + steps[i].count + ')'
+                    : '';
+        li.textContent = steps[i].name + extra;
+        progressSteps.appendChild(li);
+      }
+      lastIdx = steps.length - 1;
+
+      if (data.status) {
+        clearInterval(pollTimer); pollTimer = null;
+        submitBtn.disabled = false;
+        const scoreText = data.score ? ' / ' + data.score + 'pt' : '';
+        progressResult.textContent = '完了: ' + data.status + scoreText;
+        loadHistory();
+      }
+    } catch (_) { /* ignore transient */ }
+  }, 3000);
+}
+
+async function loadHistory() {
+  try {
+    const r = await fetch('/history');
+    const data = await r.json();
+    historyList.innerHTML = '';
+    const items = data.history || [];
+    if (items.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'muted';
+      li.textContent = '履歴なし';
+      historyList.appendChild(li);
+      return;
+    }
+    for (const h of items) {
+      const li = document.createElement('li');
+      const ts = (h.ts || '').slice(0, 16).replace('T', ' ');
+      const score = h.score ? ' / ' + h.score + 'pt' : '';
+      const name = h.propertyName || h.reinsId || '?';
+      li.textContent = ts + '  ' + name + '  ' + (h.status || '?') + score;
+      historyList.appendChild(li);
+    }
+  } catch (e) {
+    historyList.innerHTML = '<li class="muted">履歴読み込み失敗</li>';
+  }
+}
+
+loadHistory();
+</script>
+</body>
+</html>

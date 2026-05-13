@@ -1,22 +1,24 @@
 # suumo-dashboard — Project Rules
 
 ## Overview
-End-to-end REINS-to-SUUMO listing automation dashboard with AI image classification, real-time progress via WebSocket.
+REINS-to-forrent.jp listing automation. Vanilla HTML front +薄い Node http サーバ + 6-stage Playwright パイプライン (Phase 6, 2026-05)。リアルタイム可視化は headed Playwright のブラウザ自身が担うので、フロントは polling で十分。
 
 ## Tech Stack
-- Next.js 15 (App Router) + custom Express server with Socket.IO for real-time updates
-- React 19, Tailwind CSS 4, Framer Motion
-- Playwright for REINS/SUUMO/ForRent browser automation
-- Anthropic SDK for AI image analysis and text generation (`skills/image-ai.js`, `skills/text-ai.js`)
-- Sharp for image processing, Notion SDK, Slack Web API
-- JavaScript (no TypeScript)
+- Frontend: vanilla HTML / CSS / JS (`public/`) — Next.js / React / Tailwind / Framer Motion / Socket.IO は全削除済み (Phase 6)
+- Backend: Node 標準 http モジュール (`api-server.js`)。Express も非依存
+- Playwright (Chromium, headed) for REINS / forrent.jp automation
+- Anthropic SDK + OpenAI SDK (`skills/image-ai.js`, `skills/text-ai.js`)
+- Sharp / Notion SDK / Slack Web API
+- JavaScript (no TypeScript, no bundler)
 
 ## Key Notes
-- Dev: `bun run dev` / Prod: `bun run start` — both use `server.js` (Express + Next.js + Socket.IO)
-- Skills layer in `skills/`: reins, forrent, bukaku-images, google-images, google-maps, image-ai, text-ai, score-checker, suumo-check, transport-filler
+- Dev / Prod: `node api-server.js` (default port 3456、`PORT=` で上書き可)
+- 単発入稿 CLI: `node runNyuko.js <reinsId>` — api-server 経由でも内部的に spawn される
+- 3 endpoint: `POST /run` (spawn runNyuko 後 stdout から runId を抽出して返す) / `GET /status/:runId` (run.json をそのまま返す) / `GET /history` (nyuko-history.jsonl の末尾 50 件)
+- Skills layer in `skills/`: reins, forrent, bukaku, google-images, google-maps, image-ai, text-ai, score-checker, suumo-check, transport-filler, slack, forrent-reader
 - Batch/operational scripts in `scripts/` (e.g., `reins-to-notion.js`, `dedupe.js`, `migrate-nyuko-status.js`)
-- E2E / smoke / diagnostic scripts: `scripts/legacy/` (e.g., `e2e-test-15.js`, `batch-test.js`, `diagnose-nyuko.js`) — 本流フローからは参照されない
-- Requires `.env.local` with REINS/SUUMO credentials, Notion token, Anthropic API key, Slack token
+- E2E / smoke / diagnostic scripts: `scripts/legacy/` — 本流フローからは参照されない
+- Requires `.env.local` with REINS/SUUMO credentials, Notion token, Anthropic API key, OpenAI API key, Slack token
 
 ## Architecture (2026-05 refactor)
 - `scripts/batch-nyuko.js` は薄い orchestrator (processProperty ~71 行)。パイプラインは `scripts/stages/01..06-*.js` の 6 stage に分割
@@ -28,13 +30,15 @@ End-to-end REINS-to-SUUMO listing automation dashboard with AI image classificat
 - 設計正典: `docs/refactor/{contract.md, stages.md, adding-required-field.md}`、各 phase の検証: `docs/refactor/phase{1..4}-verify.md`
 - main commit `28245ff` が pre-refactor snapshot。挙動の semantic 等価性を確認する基準点
 
-## Adding UI progress events (Phase 4)
+## Adding UI progress events (Phase 6 update)
 
-UI に新しい中間進捗を出したい時の運用:
+Phase 4 で導入した `STAGE_EVENT_TO_UI` マップは server.js 削除に伴い廃止。Phase 6 のフロントは polling 方式で `run.json#steps` を読み取って表示するため、stages 側で `logStep(name, payload)` を呼べば自動で UI に反映される。
+
+新しい中間進捗を出したい時の運用:
 1. stages 内の該当処理開始直前に `logStep("○○_start", payload)` を追加 (event 名はフェーズ名のみ、DOM/selector の知識を入れない)
-2. `server.js` の `STAGE_EVENT_TO_UI` マップに 1 行追加: `{ step: N, msg: "..." }` or `{ step: N, msg: (p) => \`${p.count}枚処理中\` }`
-3. それだけで UI に `emit(N, "running", msg)` が流れる。stages の他 caller (batch-nyuko の `runLog.step`) は steps 配列に append するだけで副作用ゼロ
-4. **完了系 event** (`form_filled` / `images_classified` 等) は map に**入れない** — server.js 側で stage 直後に `emit(N, "done", ...)` するため二重発火回避
+2. `createRunLog#step` が `{name, at, ...payload}` を `run.json#steps[]` に append + 即 flush するので、フロントの polling (3 秒間隔) で順次表示される
+3. 文言整形は `public/index.html` の polling ハンドラ側で行う (現状は `name (count)` or `name — error` のフォーマット)
+4. stages の logStep 形式は batch-nyuko / watch-nyuko 経路 (本番運用) と同じものを共有 — UI 専用イベントを作らない
 
 ## Diagnosing smoke test REG_FAIL
 Stage 01 早期 REG_FAIL or forrent サーバ側「○○ を入力して下さい」が出たら:

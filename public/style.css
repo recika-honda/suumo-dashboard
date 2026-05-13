@@ -1,0 +1,77 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans",
+               "Yu Gothic", "Helvetica Neue", sans-serif;
+  color: #222;
+  background: #fff;
+  line-height: 1.6;
+  padding: 2rem 1rem;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 2rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #222;
+}
+
+section { margin-bottom: 2.5rem; }
+
+h2 {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #666;
+  margin-bottom: 0.75rem;
+}
+
+form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+input[type=text] {
+  flex: 1 1 200px;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #ccc;
+  font: inherit;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+input[type=text]:focus { outline: 2px solid #222; outline-offset: -1px; }
+
+button {
+  padding: 0.5rem 1.2rem;
+  background: #222;
+  color: #fff;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { background: #444; }
+button:disabled { background: #aaa; cursor: not-allowed; }
+
+ol, ul { list-style: none; padding-left: 0; }
+
+#progress-steps li,
+#history-list li {
+  padding: 0.2rem 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  color: #444;
+}
+
+#progress-steps li::before { content: "→ "; color: #888; }
+#history-list  li::before  { content: "· "; color: #888; }
+
+.muted { color: #999; font-size: 0.85rem; }
+
+#progress-result {
+  margin-top: 0.6rem;
+  font-weight: 500;
+  font-family: ui-monospace, monospace;
+}

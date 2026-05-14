@@ -655,4 +655,9 @@ module.exports = {
   checkImageSufficiency,
   fetchBukakuData,
   COMPANY_PLATFORM_MAP,
+  // Phase 3 cascade (skills/image-cascade.js) で再利用する itandi primitives
+  itandiLogin,
+  itandiSearchProperty,
+  itandiGetImages,
+  downloadImage,
 };

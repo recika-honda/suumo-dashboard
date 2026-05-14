@@ -216,7 +216,7 @@ async function processProperty(context, reinsPage, reinsId, index, total, runLog
   const reinsData = r1.reinsData;
   if (runLog) runLog.data.propertyName = r1.propertyName;
 
-  const r2 = await runImagesDownload({ reinsPage, downloadDir, logStep, runDir });
+  const r2 = await runImagesDownload({ reinsPage, downloadDir, logStep, runDir, context, reinsData });
   if (r2.imageInsufficient) {
     return {
       reinsId,

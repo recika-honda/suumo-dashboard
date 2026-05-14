@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node api-server.js",
     "dev": "node api-server.js",
-    "test": "node scripts/test/test-sanitize-for-length.js && node scripts/test/test-spec-validator.js && node scripts/test/test-run-inspect.js && node scripts/test/test-validate.js && node scripts/test/test-notion-feedback.js && node scripts/test/test-image-fallback.js && node scripts/test/test-score-escalation.js && node scripts/test/test-pipeline-statuses.js"
+    "test": "node scripts/test/test-sanitize-for-length.js && node scripts/test/test-spec-validator.js && node scripts/test/test-run-inspect.js && node scripts/test/test-validate.js && node scripts/test/test-notion-feedback.js && node scripts/test/test-image-fallback.js && node scripts/test/test-score-escalation.js && node scripts/test/test-pipeline-statuses.js && node scripts/test/test-image-cascade.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.77.0",

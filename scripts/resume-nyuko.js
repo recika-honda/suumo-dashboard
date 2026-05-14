@@ -172,7 +172,7 @@ async function main() {
 
     let r2 = cache["02-images-download"];
     if (startIdx <= 1) {
-      r2 = await runImagesDownload({ reinsPage, downloadDir, logStep, runDir });
+      r2 = await runImagesDownload({ reinsPage, downloadDir, logStep, runDir, context, reinsData: r1.reinsData });
     }
 
     let r3 = cache["03-images-classify"];

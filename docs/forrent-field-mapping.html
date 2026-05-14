@@ -1,0 +1,1511 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>forrent.jp 入稿フィールド対応表 (REINS → forrent)</title>
+  <style>
+    :root {
+      --bg: #f6f1e8; --fg: #2a2620; --muted: #8b8678;
+      --accent: #6b7a5a; --line: #d8d0c0; --code-bg: rgba(0,0,0,0.04);
+      --warn: #b86b3a; --warn-bg: #fff4e9;
+      --info: #4a6b8a; --info-bg: #eef3f8;
+      --ok: #5a7a4a; --ok-bg: #f0f5e8;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.65 "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 36px 28px 96px; }
+    header h1 { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 600; font-size: 28px; margin: 0 0 4px; letter-spacing: 0.02em; }
+    header .sub { color: var(--muted); font-size: 13px; margin: 0 0 6px; }
+    header .meta { color: var(--muted); font-size: 12px; }
+    nav.toc {
+      background: #fdfaf0; border: 1px solid var(--line); border-radius: 4px;
+      padding: 14px 20px; margin: 24px 0 32px; font-size: 13px;
+    }
+    nav.toc strong { display: block; margin-bottom: 6px; font-size: 12px; color: var(--muted); letter-spacing: 0.05em; }
+    nav.toc ol { margin: 0; padding-left: 22px; columns: 2; column-gap: 28px; }
+    nav.toc li { margin: 2px 0; break-inside: avoid; }
+    nav.toc a { color: var(--accent); text-decoration: none; }
+    nav.toc a:hover { text-decoration: underline; }
+    h2 { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 600; font-size: 21px; margin: 44px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); scroll-margin-top: 12px; }
+    h2 .num { color: var(--muted); font-size: 14px; font-weight: 400; margin-right: 10px; letter-spacing: 0; }
+    h3 { font-size: 16px; margin: 22px 0 6px; color: var(--accent); }
+    h4 { font-size: 14px; margin: 16px 0 6px; }
+    p { margin: 8px 0; }
+    code { background: var(--code-bg); padding: 1px 6px; border-radius: 3px; font: 12.5px ui-monospace, "SF Mono", Menlo, monospace; }
+    pre { background: #fff8ec; border: 1px solid var(--line); border-radius: 4px; padding: 12px 14px; overflow-x: auto; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+    pre code { background: none; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0 22px; font-size: 13px; }
+    th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+    th { background: #efe9dc; font-weight: 600; }
+    td.field { white-space: nowrap; font-weight: 600; }
+    td.dom { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; color: #555; }
+    td.src { font-size: 12.5px; }
+    td.rule { font-size: 12.5px; }
+    td.note { font-size: 12.5px; color: var(--muted); }
+    .pill { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 11px; vertical-align: middle; margin-left: 6px; }
+    .pill.required { background: #fde8e8; color: #a04040; }
+    .pill.fixed { background: #e6ede2; color: #4a5e3a; }
+    .pill.fallback { background: var(--warn-bg); color: var(--warn); }
+    .pill.cascade { background: var(--info-bg); color: var(--info); }
+    blockquote.warn { border-left: 3px solid var(--warn); background: var(--warn-bg); margin: 12px 0; padding: 10px 16px; font-size: 13px; color: #6b4828; }
+    blockquote.info { border-left: 3px solid var(--info); background: var(--info-bg); margin: 12px 0; padding: 10px 16px; font-size: 13px; color: #3a516b; }
+    blockquote.ok { border-left: 3px solid var(--ok); background: var(--ok-bg); margin: 12px 0; padding: 10px 16px; font-size: 13px; color: #3e5a30; }
+    .legend { background: #fdfaf0; border: 1px solid var(--line); border-radius: 4px; padding: 12px 18px; font-size: 12.5px; margin: 12px 0 24px; }
+    .legend ul { margin: 6px 0; padding-left: 22px; }
+    .legend li { margin: 2px 0; }
+    details { margin: 12px 0; border: 1px solid var(--line); border-radius: 4px; background: #fdfaf0; }
+    details > summary { padding: 8px 14px; cursor: pointer; font-weight: 600; font-size: 13px; }
+    details[open] > summary { border-bottom: 1px solid var(--line); }
+    details > div, details > table { padding: 0 14px; }
+    details > table { padding: 0; margin: 0; border: 0; }
+    details > table th, details > table td { border-left: 0; border-right: 0; }
+    hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .footer { color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 56px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>forrent.jp 入稿フィールド対応表</h1>
+  <p class="sub">REINS から取得したデータを forrent.jp 新規登録フォームのどこにどう埋めるか — 完全網羅版</p>
+  <p class="meta">出典: <code>skills/forrent/</code> 11 モジュール (Phase 7, 2026-05-14) · 対応 REINS 物件種目: マンション / アパート / 戸建 / タウンハウス · 最終更新: 2026-05-14</p>
+</header>
+
+<div class="legend">
+  <strong style="font-size:12px;color:var(--muted);letter-spacing:0.05em;">凡例</strong>
+  <ul>
+    <li><span class="pill required">必須</span> forrent 側バリデーション必須。未設定で REG_FAIL</li>
+    <li><span class="pill fixed">固定値</span> REINS データに依存せず常に同じ値を入れる</li>
+    <li><span class="pill fallback">FB</span> REINS データ欠落時のフォールバック値あり</li>
+    <li><span class="pill cascade">cascade</span> 都道府県 → 市区 → 町村 → 字丁 のように上流選択で下流選択肢が変わる</li>
+    <li><code>${S} = "${bukkenInputForm."</code> — Struts form name の prefix (`skills/forrent/constants.js`)</li>
+    <li>「REINS source」列は <code>reinsData.〇〇</code> のキー (`skills/reins.js#extractPropertyData` で抽出されたもの)</li>
+  </ul>
+</div>
+
+<nav class="toc">
+  <strong>目次</strong>
+  <ol>
+    <li><a href="#intro">入稿前バリデーション</a></li>
+    <li><a href="#sec1">1. 棟情報</a></li>
+    <li><a href="#sec2">2. 所在地</a></li>
+    <li><a href="#sec3">3. 会社間流通フラグ</a></li>
+    <li><a href="#sec4">4. お金 (賃料・管理費・敷礼)</a></li>
+    <li><a href="#sec5">5. 間取り・面積</a></li>
+    <li><a href="#sec6">6. 入居時期</a></li>
+    <li><a href="#sec7">7. 取引態様 / ★マーク / 地図表示</a></li>
+    <li><a href="#sec8">8. 入居条件 (10 項目)</a></li>
+    <li><a href="#sec9">9. 仲介手数料 / 管理形態 / 省エネ</a></li>
+    <li><a href="#sec10">10. 定期借家 + 契約期間</a></li>
+    <li><a href="#sec11">11. 保証人代行 / BB / 設備環境</a></li>
+    <li><a href="#sec12">12. その他費用 + 損保 (火災保険)</a></li>
+    <li><a href="#sec13">13. 駐車場状況</a></li>
+    <li><a href="#sec14">14. 元付業者 + 貴社物件コード</a></li>
+    <li><a href="#sec15">15. 開口向き (バルコニー方向)</a></li>
+    <li><a href="#sec16">16. ネット掲載 / スマピク / 見学予約等</a></li>
+    <li><a href="#sec17">17. テキスト系 (キャッチ・特記・etc)</a></li>
+    <li><a href="#sec18">18. 交通 (地図修正 + らくらく)</a></li>
+    <li><a href="#sec19">19. 周辺環境</a></li>
+    <li><a href="#sec20">20. 特徴項目チェックボックス</a></li>
+    <li><a href="#sec21">21. 画像アップロード</a></li>
+    <li><a href="#appendix">付録 A-E (コード表・制限)</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================ -->
+<h2 id="intro"><span class="num">00</span>入稿前バリデーション (Stage 01 早期 REG_FAIL)</h2>
+
+<p>REINS から抽出した時点で必須項目が欠けていれば、forrent にアクセスする前に弾く。設定は <code>config/forrent-required.spec.json</code> に集約 (新項目は JSON に entry 追加で完結)。</p>
+
+<table>
+  <thead><tr><th>REINS field</th><th>適用範囲 (appliesTo)</th><th>拒否理由</th><th>備考</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">建物名</td>
+      <td>ALL</td>
+      <td>REINSデータに建物名がありません</td>
+      <td>全物件種目で forrent サーバ側必須</td>
+    </tr>
+    <tr>
+      <td class="field">部屋番号</td>
+      <td>マンション / アパート</td>
+      <td>REINSデータに部屋番号がありません</td>
+      <td>戸建・タウンハウス等では required ではない</td>
+    </tr>
+    <tr>
+      <td class="field">使用部分面積</td>
+      <td>マンション / アパート</td>
+      <td>REINSデータに面積（使用部分面積）がありません</td>
+      <td>元付業者の入力漏れ (例: 100139100018) を 14 秒で reject</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote class="info">
+判定は <code>trim + falsy</code> 統一。空文字 / 全空白 / null / undefined すべて欠落扱い。詳細追加手順は <code>docs/refactor/adding-required-field.md</code>。
+</blockquote>
+
+<!-- ============================================ -->
+<h2 id="sec1"><span class="num">01</span>棟情報</h2>
+
+<table>
+  <thead><tr><th style="width:14%">forrent label</th><th style="width:22%">DOM (id / name)</th><th style="width:18%">REINS source</th><th>変換ロジック / 注意点</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">物件名 <span class="pill required">必須</span></td>
+      <td class="dom">id="bukkenNm"<br>max=35</td>
+      <td class="src">建物名</td>
+      <td class="rule">そのまま投入。35 文字超は forrent 側でエラー。事前 validate でも建物名空文字は弾く。</td>
+    </tr>
+    <tr>
+      <td class="field">地上階建</td>
+      <td class="dom">id="kai" max=2</td>
+      <td class="src">地上階層</td>
+      <td class="rule">正規表現 <code>/(\d+)/</code> で先頭数字のみ抽出 ("地上3階建" → 3)。</td>
+    </tr>
+    <tr>
+      <td class="field">地下階建</td>
+      <td class="dom">id="chikaInput" max=1</td>
+      <td class="src">地下階層</td>
+      <td class="rule">同上。地下なしなら空のまま。</td>
+    </tr>
+    <tr>
+      <td class="field">階部分 (所在階)</td>
+      <td class="dom">id="kaibubun" max=5</td>
+      <td class="src">所在階 / 部屋番号</td>
+      <td class="rule">優先順位:<br>
+        (1) <code>所在階</code> が <code>^\d+$</code> → そのまま<br>
+        (2) <code>部屋番号</code> 3 桁以上 → 末尾 2 桁を除く (901→9, 1201→12)<br>
+        (3) 部屋番号 1-2 桁 + 地上階建 ≤5 階 + 先頭桁 ≤ 階数 → 先頭桁 (小規模物件向け)
+      </td>
+    </tr>
+    <tr>
+      <td class="field">号室</td>
+      <td class="dom">id="heyaNoInput"<br>max=10, ASCII 21-7E のみ</td>
+      <td class="src">部屋番号</td>
+      <td class="rule">入力直前に全角→半角正規化 + 空白除去 + <code>/^[\x21-\x7E]{1,10}$/</code> 適合チェック。条件外はスキップ。</td>
+    </tr>
+    <tr>
+      <td class="field">物件種別 <span class="pill required">必須</span> <span class="pill fallback">FB</span></td>
+      <td class="dom">name="${S}bukkenShuCd}"<br>select</td>
+      <td class="src">物件種目<br>建物構造</td>
+      <td class="rule">
+        マンション→01 / アパート→02 / 戸建→11 / タウン・テラス→16 / その他→99<br>
+        部分一致フォールバック: <code>/タウン\|テラス/→16, /マンション\|ＭＳ/→01, /アパート/→02, /戸建\|一戸/→11</code><br>
+        <strong>override:</strong> マンション(01) ＋ 構造が木造 / 軽量鉄骨 / LS → アパート(02) に強制変更<br>
+        <strong>fallback:</strong> マッチ不能なら その他(99) で必ず埋める (必須なので)
+      </td>
+    </tr>
+    <tr>
+      <td class="field">構造 <span class="pill required">必須</span> <span class="pill fallback">FB</span></td>
+      <td class="dom">name="${S}kozoShuCd}"<br>select</td>
+      <td class="src">建物構造</td>
+      <td class="rule">「造」サフィックス除去後、構造コード表 (付録 A) で逆引き。マッチなしは その他(99)。</td>
+    </tr>
+    <tr>
+      <td class="field">築年 <span class="pill required">必須</span> <span class="pill fallback">FB</span></td>
+      <td class="dom">id="Wareki2Seireki1" max=4</td>
+      <td class="src">築年月</td>
+      <td class="rule"><code>/(\d{4})年/</code> で西暦抽出。不明時は <strong>1990</strong> をフォールバック。</td>
+    </tr>
+    <tr>
+      <td class="field">築月</td>
+      <td class="dom">name="${S}chikuGetsu}" max=2</td>
+      <td class="src">築年月</td>
+      <td class="rule"><code>/(\d{1,2})月/</code> で抽出。月不明 ("1974年（昭和49年）" 等) は <strong>1</strong> をデフォルト。</td>
+    </tr>
+    <tr>
+      <td class="field">入居区分 (新築/中古/未入居) <span class="pill required">必須</span></td>
+      <td class="dom">id="shinchikuKbnCd1"<br>radio</td>
+      <td class="src">築年月</td>
+      <td class="rule">
+        現在年月 - 築年月 が <strong>12 ヶ月未満</strong> → 新築(idx=1, value=1)、それ以外 → 中古(idx=0, value=2)<br>
+        <strong>事故再現:</strong> 100138970003 — 2025年1月築 / 2026-04 入稿で年単位判定だと「新築」扱いされ「築年月が1年以上前」エラー。月精度判定で解消。
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec2"><span class="num">02</span>所在地 (cascade select)</h2>
+
+<table>
+  <thead><tr><th style="width:14%">forrent label</th><th style="width:22%">DOM</th><th style="width:18%">REINS source</th><th>変換ロジック / 注意点</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">都道府県 <span class="pill cascade">cascade</span></td>
+      <td class="dom">id="todofukenList"</td>
+      <td class="src">都道府県名</td>
+      <td class="rule">option text 完全一致。default = 東京都。選択後 1.5 秒待機 (cascade 読込)。</td>
+    </tr>
+    <tr>
+      <td class="field">市郡区 <span class="pill cascade">cascade</span></td>
+      <td class="dom">id="shigunkuList"</td>
+      <td class="src">所在地名１</td>
+      <td class="rule">都道府県選択後に値が埋まる。選択後 <code>waitForCascade(chosonList, 5000)</code>。</td>
+    </tr>
+    <tr>
+      <td class="field">町村 <span class="pill cascade">cascade</span></td>
+      <td class="dom">id="chosonList"</td>
+      <td class="src">所在地名２</td>
+      <td class="rule">
+        所在地名２が <code>"神田神保町１丁目"</code> のように丁目付きなら <code>/^(.+?)(\d+)丁目$/</code> で分離。<br>
+        前半 ("神田神保町") を町村に、後半 ("1") は次の字丁に流す。<br>
+        選択後 <code>waitForCascade(azaList, 5000)</code>。
+      </td>
+    </tr>
+    <tr>
+      <td class="field">字丁 (丁目) <span class="pill cascade">cascade</span></td>
+      <td class="dom">id="azaList"</td>
+      <td class="src">所在地名２ / 所在地名３</td>
+      <td class="rule">
+        <strong>azaList の option は全角数字のみ</strong> ("１","２","３"...)。半角→全角変換必須。<br>
+        丁目情報優先順位: ① 所在地名２から抽出した数字、② 所在地名３冒頭 <code>/^(\d+)丁目/</code>。<br>
+        丁目なし (一番町・二番町 等) は azaList の最初の有効 option を auto-select。
+      </td>
+    </tr>
+    <tr>
+      <td class="field">番地 <span class="pill fallback">FB</span></td>
+      <td class="dom">id="banchiNm"</td>
+      <td class="src">所在地名３</td>
+      <td class="rule">
+        丁目が所在地名２から来た場合 → 所在地名３全体を番地に。<br>
+        丁目が所在地名３から来た場合 → <code>/^\d+丁目/</code> を除去した残りを番地に。<br>
+        最終チェック: <code>banchiNm</code> が空なら <code>"-"</code> をデフォルト投入 (新築・番地未確定対応)。
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec3"><span class="num">03</span>会社間流通フラグ (全 OFF 固定)</h2>
+
+<p>下記 3 チェックボックスを<strong>必ず OFF</strong>。会社間流通 (REINS) には物件名・部屋番号・詳細住所を露出させない (ファンテイズ社方針)。</p>
+
+<table>
+  <thead><tr><th>label</th><th>DOM id</th><th>設定</th></tr></thead>
+  <tbody>
+    <tr><td class="field">会社間流通: 物件名</td><td class="dom">bukkenNmDispFlg</td><td><span class="pill fixed">false</span></td></tr>
+    <tr><td class="field">会社間流通: 部屋番号</td><td class="dom">heyaNoDispFlg</td><td><span class="pill fixed">false</span></td></tr>
+    <tr><td class="field">会社間流通: 詳細住所</td><td class="dom">shosaiJushoDispFlg1</td><td><span class="pill fixed">false</span></td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec4"><span class="num">04</span>お金 (賃料・管理費・敷礼)</h2>
+
+<h3>賃料</h3>
+<table>
+  <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">賃料 (万)</td>
+      <td class="dom">name="${S}chinryo1}"</td>
+      <td class="src">賃料</td>
+      <td class="rule">"7.0万円" → 7。"10.5万円" → 10。<code>Math.floor(parseFloat(...))</code></td>
+    </tr>
+    <tr>
+      <td class="field">賃料 (千)</td>
+      <td class="dom">name="${S}chinryo2}"</td>
+      <td class="src">賃料</td>
+      <td class="rule">"7.0万円" → 0。"10.5万円" → 5。<code>Math.round((man - floor) * 10)</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>管理費 / 共益費</h3>
+<p>REINS 側は <code>共益費</code> / <code>管理費</code> どちらかに金額があれば優先採用。両方なしなら <code>kanrihiFlg</code> を OFF (=「なし」扱い)。</p>
+<table>
+  <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">管理費 (万)</td>
+      <td class="dom">name="${S}kanrihi1}"</td>
+      <td class="src">共益費 / 管理費</td>
+      <td class="rule"><code>/([\d,]+)円/</code> 抽出 → 円 → 万 + 円残。万 &gt; 0 のみ入力。</td>
+    </tr>
+    <tr>
+      <td class="field">管理費 (円)</td>
+      <td class="dom">name="${S}kanrihi2}"</td>
+      <td class="src">共益費 / 管理費</td>
+      <td class="rule">円残部 (<code>yen % 10000</code>) を投入。</td>
+    </tr>
+    <tr>
+      <td class="field">管理費フラグ</td>
+      <td class="dom">id="kanrihiFlg"</td>
+      <td class="src">—</td>
+      <td class="rule">「なし」「ー」「0」 or REINS 欠落 → OFF。</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>敷金 / 礼金 / 保証金 / 償却金 (<code>fillDeposit</code> 共通ロジック)</h3>
+
+<p>4 フィールドすべて同じパターン分岐で処理される。REINS 側の表現 ("1ヶ月" / "10万円" / "50,000円" / "なし") から自動判別。</p>
+
+<table>
+  <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">敷金 (整数 / 万)</td>
+      <td class="dom">name="${S}shikikin1}"</td>
+      <td class="src">敷金</td>
+      <td class="rule" rowspan="12">
+        パターン分岐 (順に評価):
+        <ol style="margin:4px 0 4px 18px;">
+          <li><strong>"なし" / "ー" / "0" / 空</strong> → <code>{flg}Flg</code> を OFF</li>
+          <li><strong>"1ヶ月" / "1.5ヶ月" / "1か月" / "1カ月"</strong> → ヶ月単位ラジオ click、整数/小数を n1/n2 に分割</li>
+          <li><strong>"10万円" / "10.5万円"</strong> → 万円単位ラジオ click、万/千を n1/n2 に分割</li>
+          <li><strong>"50,000円" / "100000円"</strong> → カンマ除去 → 万 + 千に変換</li>
+          <li><strong>数値のみ "1.5"</strong> → ヶ月扱いで整数/小数分割</li>
+          <li>上記いずれでもない → <code>{flg}Flg</code> を OFF + ログ</li>
+        </ol>
+        <strong>償却金の特殊処理:</strong> REINS の <code>償却月数</code> (数値) → <code>"Nヶ月"</code> 文字列に変換してから fillDeposit に流す。<code>償却率</code> のみのケースは forrent 入力フォームに率 input が無いため OFF 固定。
+      </td>
+    </tr>
+    <tr>
+      <td class="field">敷金 (小数 / 千)</td>
+      <td class="dom">name="${S}shikikin2}"</td>
+      <td class="src">敷金</td>
+    </tr>
+    <tr>
+      <td class="field">敷金 単位</td>
+      <td class="dom">id="shikikinKbnCd1" (ヶ月)<br>id="shikikinKbnCd2" (万円)</td>
+      <td class="src">敷金</td>
+    </tr>
+    <tr>
+      <td class="field">礼金 (整数 / 万)</td>
+      <td class="dom">name="${S}reikin1}"</td>
+      <td class="src">礼金</td>
+    </tr>
+    <tr>
+      <td class="field">礼金 (小数 / 千)</td>
+      <td class="dom">name="${S}reikin2}"</td>
+      <td class="src">礼金</td>
+    </tr>
+    <tr>
+      <td class="field">礼金 単位</td>
+      <td class="dom">id="reikinKbnCd1" (ヶ月)<br>id="reikinKbnCd2" (万円)</td>
+      <td class="src">礼金</td>
+    </tr>
+    <tr>
+      <td class="field">保証金 (整数 / 万)</td>
+      <td class="dom">name="${S}hoshokin1}"</td>
+      <td class="src">保証金</td>
+    </tr>
+    <tr>
+      <td class="field">保証金 (小数 / 千)</td>
+      <td class="dom">name="${S}hoshokin2}"</td>
+      <td class="src">保証金</td>
+    </tr>
+    <tr>
+      <td class="field">保証金 単位</td>
+      <td class="dom">id="hoshokinKbnCd1" (ヶ月)<br>id="hoshokinKbnCd2" (万円)</td>
+      <td class="src">保証金</td>
+    </tr>
+    <tr>
+      <td class="field">償却金 (整数)</td>
+      <td class="dom">name="${S}shokyakukin1}"</td>
+      <td class="src">償却月数 / 償却コード</td>
+    </tr>
+    <tr>
+      <td class="field">償却金 (小数)</td>
+      <td class="dom">name="${S}shokyakukin2}"</td>
+      <td class="src">償却月数</td>
+    </tr>
+    <tr>
+      <td class="field">償却金 単位</td>
+      <td class="dom">id="shokyakukinKbnCd1" (ヶ月)<br>id="shokyakukinKbnCd2" (万円)<br>id="shokyakukinKbnCd3" (率?)</td>
+      <td class="src">償却月数</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>forrent に存在するが現状未対応 / 別経路で扱うフィールド</h3>
+
+<blockquote class="warn">
+<strong>未マッピングの forrent 入力フィールド一覧。</strong>現状は空入稿 (= forrent サーバ default 値) になる。物件によっては記入推奨だが、優先度・運用次第で対応する。
+</blockquote>
+
+<table>
+  <thead><tr><th style="width:18%">forrent label</th><th style="width:24%">DOM</th><th style="width:22%">REINS 該当項目</th><th>備考</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">権利金</td>
+      <td class="dom">(forrent に input 見つからず)</td>
+      <td class="src">権利金</td>
+      <td>forrent 新規登録フォームに権利金 input は見つからない (取材データで confirm)。記入する場合は備考に書く運用。</td>
+    </tr>
+    <tr>
+      <td class="field">敷金積増</td>
+      <td class="dom">${S}tsumimashiFlg} / tsumimashi1 / tsumimashi2 / tsumimashiKbnCd / tsumimashiJokenKbnCd</td>
+      <td class="src">(REINS 直接対応なし)</td>
+      <td>敷金から月数経過時に追加で積み増される運用。REINS フィールドに直対応なし。当面 OFF 固定。</td>
+    </tr>
+    <tr>
+      <td class="field">敷引</td>
+      <td class="dom">${S}shikibikiFlg} / shikibiki1 / shikibiki2 / shikibikiKbnCd</td>
+      <td class="src">(REINS 直接対応なし)</td>
+      <td>敷金から退去時に控除される運用。REINS に「敷引」フィールドはなく、償却で代用されるのが普通。</td>
+    </tr>
+    <tr>
+      <td class="field">駐車場料金</td>
+      <td class="dom">${S}chushajoRyokin1} / chushajoRyokin2</td>
+      <td class="src">(将来課題)</td>
+      <td>駐車場別途料金。REINS に「駐車場料金」フィールドがあれば反映可能。現状は備考に書かれる。</td>
+    </tr>
+    <tr>
+      <td class="field">その他諸費用</td>
+      <td class="dom">${S}etcShohiyoFlg} / etcShohiyoShosai</td>
+      <td class="src">—</td>
+      <td>etcHiyo (初期費用) とは別枠の月額諸費用。現状未対応。</td>
+    </tr>
+    <tr>
+      <td class="field">フリーレント条件詳細</td>
+      <td class="dom">${S}freeRentJokenShosai}</td>
+      <td class="src">条件フリー / 備考3</td>
+      <td>「フリーレント1ヶ月」等の条件詳細。現状は備考 (特記事項) に流れる。</td>
+    </tr>
+    <tr>
+      <td class="field">定期借家「月」数</td>
+      <td class="dom">${S}teikiShakuyaGetsu}</td>
+      <td class="src">契約期間</td>
+      <td>既存実装は <code>teikiShakuyaNen</code> (年) のみ。「2年6ヶ月」等の半端期間は現状切り捨て。</td>
+    </tr>
+    <tr>
+      <td class="field">更新料</td>
+      <td class="dom">(forrent に input 見つからず)</td>
+      <td class="src">更新料</td>
+      <td>REINS では抽出される (<code>reinsData.更新料</code>) が forrent 入力フォームに該当 input なし。備考 (biko) 経由で特記事項に流れる。</td>
+    </tr>
+    <tr>
+      <td class="field">その他月額費</td>
+      <td class="dom">(forrent に input 見つからず)</td>
+      <td class="src">その他月額費名称 / 金額</td>
+      <td>forrent には汎用「その他月額費」input なし。駐車場料金 (chushajoRyokin) など特定用途のみ。</td>
+    </tr>
+    <tr>
+      <td class="field">うち管理費消費税</td>
+      <td class="dom">(forrent に input なし)</td>
+      <td class="src">うち管理費消費税</td>
+      <td>forrent は管理費を税込で扱う想定。内訳の消費税は反映しない。</td>
+    </tr>
+    <tr>
+      <td class="field">管理組合有無</td>
+      <td class="dom">(forrent 該当なし)</td>
+      <td class="src">管理組合有無</td>
+      <td>forrent 入稿時は不要 (賃貸物件の入稿項目ではない)。</td>
+    </tr>
+    <tr>
+      <td class="field">更新区分 / 新賃料</td>
+      <td class="dom">(forrent 該当なし)</td>
+      <td class="src">更新区分 / 新賃料</td>
+      <td>REINS 側で更新時の家賃変動を表す情報。forrent 入稿には不要。</td>
+    </tr>
+    <tr>
+      <td class="field">その他一時金名称1/2 / 金額1/2</td>
+      <td class="dom">etcHiyoShosai (テキスト) 経由</td>
+      <td class="src">その他一時金名称1/2 / 金額1/2</td>
+      <td>「更新事務手数料」等の特殊項目。<strong>現状の reins.js extractor では未抽出</strong> (LABELS にも入っていない)。biko 経由で特記事項に流れる可能性はあるが、金額情報は失われる。</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec5"><span class="num">05</span>間取り・面積</h2>
+
+<table>
+  <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">間取りタイプ</td>
+      <td class="dom">name="${S}madoriTypeKbnCd}"</td>
+      <td class="src">間取タイプ</td>
+      <td class="rule">付録 B のコード表で逆引き。ワンルーム→01 / K→02 / DK→03 / SDK→04 / LDK→05 / SLDK→06 / LK→07 / SK→08 / SLK→09</td>
+    </tr>
+    <tr>
+      <td class="field">部屋数</td>
+      <td class="dom">id="heyaCntInput" max=2</td>
+      <td class="src">間取部屋数</td>
+      <td class="rule">
+        <strong>ワンルーム(01) の場合は入力しない</strong> (バリデーションエラー回避)。<br>
+        それ以外は <code>/(\d+)/</code> で先頭数字抽出。
+      </td>
+    </tr>
+    <tr>
+      <td class="field">面積 (整数 m²) <span class="pill required">必須</span></td>
+      <td class="dom">id="mensekiIntegerInput" max=3</td>
+      <td class="src">使用部分面積</td>
+      <td class="rule">"㎡" / "m2" 除去 → "." で split → <code>parts[0]</code> = 整数部</td>
+    </tr>
+    <tr>
+      <td class="field">面積 (小数 m²) <span class="pill required">必須</span></td>
+      <td class="dom">id="mensekiDecimalInput" max=2</td>
+      <td class="src">使用部分面積</td>
+      <td class="rule"><code>parts[1]</code> または <code>"00"</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec6"><span class="num">06</span>入居時期 (nyukyoKbnCd)</h2>
+
+<table>
+  <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">入居時期</td>
+      <td class="dom">id="nyukyoKbnCd1" (即=1)<br>id="nyukyoKbnCd2" (相談=2)<br>id="nyukyoKbnCd3" (年月指定=3)</td>
+      <td class="src">入居時期</td>
+      <td class="rule">
+        <code>/即/</code> 含む → 即(1)<br>
+        <code>/(\d{4})年\s*(\d{1,2})月/</code> マッチ → 年月指定(3) + <code>nyukyoNen</code> / <code>nyukyoTsuki</code> 投入<br>
+        それ以外 → 相談(2) (default)<br>
+        radio set は <code>radio.checked = true</code> + <code>onclick()</code> 直接発火 (frame click 不安定対応)
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec7"><span class="num">07</span>取引態様 / ★マーク / 地図表示</h2>
+
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th style="width:14%">設定</th><th>備考</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">取引態様 <span class="pill required">必須</span></td>
+      <td class="dom">id="torihikiTaiyoKbnCd" select</td>
+      <td><span class="pill fixed">value=4</span></td>
+      <td>常に「仲介先物(4)」を選択 (FANGO はファンテイズ側の物件を専任で扱うわけではなく、客付仲介としての立ち位置)。</td>
+    </tr>
+    <tr>
+      <td class="field">★マーク (客付可)</td>
+      <td class="dom">id="hoshiFlg1" radio</td>
+      <td><span class="pill fixed">あり</span></td>
+      <td>常にあり (=他社からの客付を受ける物件)。<code>checked=true</code> + <code>change</code> イベント発火。</td>
+    </tr>
+    <tr>
+      <td class="field">地図表示</td>
+      <td class="dom">id="mapHyojiFlg" checkbox</td>
+      <td><span class="pill fixed">ON</span></td>
+      <td>ネット地図上で物件を表示する。</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec8"><span class="num">08</span>入居条件 (10 項目 radio)</h2>
+
+<p>REINS 設備 / 条件フリー / 備考 3 / 設備フリーを連結 (<code>combined</code>) してキーワード判定。
+各項目のデフォルト index は 41pt 実績値 (= ファンテイズ運用基準)。</p>
+
+<table>
+  <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM (name)</th><th style="width:18%">default idx</th><th>上書きルール (REINS 検出時)</th></tr></thead>
+  <tbody>
+    <tr><td class="field">法人入居</td><td class="dom">hojinKbnCd</td><td><span class="pill fixed">0 (可)</span></td><td>—</td></tr>
+    <tr><td class="field">学生</td><td class="dom">gakuseiKbnCd</td><td><span class="pill fixed">0 (可)</span></td><td>—</td></tr>
+    <tr><td class="field">男女</td><td class="dom">seibetsuKbnCd</td><td><span class="pill fixed">0 (不問)</span></td><td>—</td></tr>
+    <tr><td class="field">単身</td><td class="dom">tanshinKbnCd</td><td><span class="pill fixed">0 (可)</span></td><td>—</td></tr>
+    <tr><td class="field">二人入居</td><td class="dom">futariKbnCd</td><td><span class="pill fixed">0 (可)</span></td><td>—</td></tr>
+    <tr><td class="field">子ども</td><td class="dom">kodomoKbnCd</td><td><span class="pill fixed">0 (可)</span></td><td>—</td></tr>
+    <tr>
+      <td class="field">ペット</td>
+      <td class="dom">petKbnCd</td>
+      <td>0 (不可)</td>
+      <td><code>/ペット可\|ペット相談\|ペットOK\|ペット飼育可\|小型犬\|猫/</code> → idx=2 (相談、運用統一)</td>
+    </tr>
+    <tr>
+      <td class="field">楽器</td>
+      <td class="dom">gakkiKbnCd</td>
+      <td>0 (不可)</td>
+      <td><code>/楽器可\|楽器相談\|楽器OK\|ピアノ可/</code> → idx=1 (可)</td>
+    </tr>
+    <tr>
+      <td class="field">事務所利用</td>
+      <td class="dom">jimushoRiyoKbnCd</td>
+      <td>0 (不可)</td>
+      <td><code>/事務所可\|事務所利用可\|SOHO\|事務所相談/</code> → idx=1 (可)</td>
+    </tr>
+    <tr>
+      <td class="field">ルームシェア</td>
+      <td class="dom">roomShareKbnCd</td>
+      <td>0 (不可)</td>
+      <td><code>/ルームシェア可\|ルームシェア相談/</code> → idx=1 (可)</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec9"><span class="num">09</span>仲介手数料 / 管理形態 / 省エネ</h2>
+
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th style="width:14%">設定</th><th>備考</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">仲介手数料 <span class="pill required">必須</span></td>
+      <td class="dom">chukaiTesuryoFlg radio</td>
+      <td><span class="pill fixed">idx=0 (あり)</span></td>
+      <td>取引態様=仲介先物(4) なので常に「あり」</td>
+    </tr>
+    <tr>
+      <td class="field">管理形態</td>
+      <td class="dom">kanriKeitaiKbnCd radio</td>
+      <td><span class="pill fixed">idx=3 (指定なし)</span></td>
+      <td>41pt 実績値。客付仲介立場のため詳細不明</td>
+    </tr>
+    <tr>
+      <td class="field">省エネルギー</td>
+      <td class="dom">energyKbnCd radio</td>
+      <td><span class="pill fixed">idx=0 (対象外)</span></td>
+      <td>41pt 実績値</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec10"><span class="num">10</span>定期借家 + 契約期間</h2>
+
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">定期借家</td>
+      <td class="dom">teikiShakuyaFlg radio</td>
+      <td class="src">備考3</td>
+      <td>備考3 が <code>/定期借家\|定借/</code> マッチで idx=0 (定期借家あり) を click。</td>
+    </tr>
+    <tr>
+      <td class="field">契約期間 (年/月指定)</td>
+      <td class="dom">teikiShakuyaKbnCd radio</td>
+      <td class="src">—</td>
+      <td><span class="pill fixed">idx=1 (年指定)</span> を常に選択</td>
+    </tr>
+    <tr>
+      <td class="field">契約年数</td>
+      <td class="dom">name="${S}teikiShakuyaNen}"</td>
+      <td class="src">契約期間 / 備考3</td>
+      <td>
+        優先順位:
+        <ol style="margin:4px 0 4px 18px;">
+          <li><code>契約期間</code> から <code>/(\d+)\s*年/</code> 抽出</li>
+          <li>無ければ <code>/(\d+)\s*(?:ヶ?月\|月)/</code> 抽出 → <code>ceil(月/12)</code></li>
+          <li>定期借家マッチ時は <code>備考3</code> 内 <code>/定期借家\D*(\d+)年/</code> で上書き</li>
+          <li>全て不明 → <strong>2</strong> をデフォルト</li>
+        </ol>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec11"><span class="num">11</span>保証人代行 / BB / 設備環境</h2>
+
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th style="width:14%">設定</th><th>備考</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">保証人代行 <span class="pill required">必須</span></td>
+      <td class="dom">hoshoninDaikoKbnCd radio</td>
+      <td><span class="pill fixed">idx=1 (必加入)</span></td>
+      <td>先方指定ルール。idx=0 (任意) と 1 (必加入) の 2 択。</td>
+    </tr>
+    <tr>
+      <td class="field">保証人代行会社区分</td>
+      <td class="dom">name="${S}hoshoninDaikoKaishaKbnCd}" select</td>
+      <td><span class="pill fixed">value=2 (その他)</span></td>
+      <td>先方指定。具体的な会社名は別フィールドで「詳細お問い合わせください」固定文。</td>
+    </tr>
+    <tr>
+      <td class="field">保証会社名 (詳細)</td>
+      <td class="dom">name="${S}hoshoninDaikoShosai}"</td>
+      <td><span class="pill fixed">"詳細お問い合わせください"</span></td>
+      <td>固定文字列</td>
+    </tr>
+    <tr>
+      <td class="field">BB (ブロードバンド) 対応</td>
+      <td class="dom">bbCpyKbnCd radio</td>
+      <td><span class="pill fixed">idx=1</span></td>
+      <td>41pt 実績値</td>
+    </tr>
+    <tr>
+      <td class="field">設備環境区分 1</td>
+      <td class="dom">name="${S}setsubiKankyoKbnCd}" select</td>
+      <td><span class="pill fixed">value=9 (指定なし)</span></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td class="field">設備環境区分 2</td>
+      <td class="dom">name="${S}setsubiKankyoKbnCd2}" select</td>
+      <td><span class="pill fixed">value=9 (指定なし)</span></td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec12"><span class="num">12</span>その他費用 + 損保 (火災保険)</h2>
+
+<h3>その他費用 (鍵交換代・消毒・クリーニング 等)</h3>
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">その他費用フラグ</td>
+      <td class="dom">id="etcHiyoFlg" checkbox</td>
+      <td><span class="pill fixed">常に ON</span></td>
+    </tr>
+    <tr>
+      <td class="field">その他費用 (万)</td>
+      <td class="dom">name="${S}etcHiyo1}"</td>
+      <td rowspan="2">
+        合算ロジック (優先順位):
+        <ol style="margin:4px 0 4px 18px;">
+          <li><strong>(A) 物確 initialCostData</strong>: 鍵交換代 + 消毒代 + クリーニング代 + サポート代 + 事務手数料 を合計</li>
+          <li><strong>(B) REINS biko regex フォールバック</strong>: <code>その他一時金 / 備考1-3 / 条件フリー</code> を連結し、以下のパターンを各々 <code>g</code> フラグで抽出して合算
+            <ul style="margin:4px 0 4px 14px;">
+              <li><code>/鍵交換[代費]?\D*([\d,.]+)\s*円/g</code></li>
+              <li><code>/(?:室内)?消毒[代費]?\D*([\d,.]+)\s*円/g</code></li>
+              <li><code>/クリーニング[代費]?\D*([\d,.]+)\s*円/g</code></li>
+              <li><code>/(?:室内)?清掃[代費]?\D*([\d,.]+)\s*円/g</code></li>
+              <li><code>/抗菌[代費]?\D*([\d,.]+)\s*円/g</code></li>
+              <li><code>/害虫駆除[代費]?\D*([\d,.]+)\s*円/g</code></li>
+              <li><code>/(?:安心\|入居\|24時間)サポート[代費]?\D*([\d,.]+)\s*円/g</code></li>
+              <li><code>/事務手数料\D*([\d,.]+)\s*円/g</code></li>
+              <li><code>/書類作成[代費]?\D*([\d,.]+)\s*円/g</code></li>
+            </ul>
+            個別の値が <code>0 &lt; x &lt; 500000</code> のものだけ合算。<br>
+            それも無ければ <code>/(?:初期費用\|その他[一費]?[時金]?)\D*([\d,.]+)\s*円/</code> で総額抽出。
+          </li>
+          <li><strong>(C) デフォルト: 2 万円</strong> (上記すべて不発)</li>
+        </ol>
+        合計 → <code>man = floor(totalYen / 10000)</code>, <code>sen = round((totalYen % 10000) / 100)</code> に分割。
+      </td>
+    </tr>
+    <tr>
+      <td class="field">その他費用 (百)</td>
+      <td class="dom">name="${S}etcHiyo2}"</td>
+    </tr>
+    <tr>
+      <td class="field">その他費用 詳細</td>
+      <td class="dom">name="${S}etcHiyoShosai}"<br>max=200 (全角)</td>
+      <td>
+        構築優先順位:
+        <ol style="margin:4px 0 4px 18px;">
+          <li>物確 initialCostData あり → "鍵交換代5,500円、消毒代22,000円、..." 形式</li>
+          <li>備考に費用キーワードあり → 該当センテンスを連結 (キーワード一覧: 鍵交換 / 消毒 / クリーニング / 保険 / 損保 / 火災 / 初期費用 / 鍵代 / 消臭 / 室内清掃 / 安心サポート / 入居サポート / 24時間サポート / 抗菌 / 害虫駆除 / 仲介手数料 / 事務手数料 / 書類作成 / 契約事務 / サポート代 / サポート費 / 保証料 / 更新料 / 更新事務)</li>
+          <li>どれも無し → <strong>"鍵交換代・その他初期費用"</strong></li>
+        </ol>
+        最終的に <code>sanitizeForLength(text, 200)</code> 経由。
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>損保 (火災保険)</h3>
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">損保フラグ</td>
+      <td class="dom">id="sonpoFlg" checkbox</td>
+      <td><span class="pill fixed">常に ON</span> — チェックボックスを入れるだけ</td>
+    </tr>
+  </tbody>
+</table>
+<blockquote class="info">
+<strong>金額・契約年数は入力しない</strong> (kento 指示 2026-05-14)。チェックボックスのみ ON にして、<code>sonpoKingaku1</code> / <code>sonpoKeiyakuCnt</code> は空のままにする。
+</blockquote>
+
+<!-- ============================================ -->
+<h2 id="sec13"><span class="num">13</span>駐車場状況</h2>
+
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">駐車場状況区分</td>
+      <td class="dom">chushajoJokyoKbnCd radio<br>idx0=空あり(1)<br>idx1=空なし(2)<br>idx2=近隣あり(3)</td>
+      <td class="src">駐車場 / 備考3</td>
+      <td>
+        判定 (順に評価):
+        <ol style="margin:4px 0 4px 18px;">
+          <li><code>/駐車場\s*あり\|駐車場\s*有\|駐車場.*空\|敷地内.*駐\|[Pp]arking/i</code> → idx=0 (空あり)</li>
+          <li><code>/近隣.*駐\|駐車場.*近/</code> → idx=2 (近隣あり)</li>
+          <li>それ以外 → idx=1 (空なし、default)</li>
+        </ol>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec14"><span class="num">14</span>元付業者 + 貴社物件コード</h2>
+
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">元付業者名</td>
+      <td class="dom">name="${S}mototsukeGyoshaNm}" max=30</td>
+      <td class="src">商号</td>
+      <td><code>.slice(0, 30)</code> で 30 文字制限</td>
+    </tr>
+    <tr>
+      <td class="field">元付担当者名</td>
+      <td class="dom">name="${S}mototsukeTantoNm}"</td>
+      <td>—</td>
+      <td><span class="pill fixed">"-"</span> (REINS には個人名なし)</td>
+    </tr>
+    <tr>
+      <td class="field">元付電話番号</td>
+      <td class="dom">name="${S}mototsukeTelNo}"</td>
+      <td class="src">代表電話番号</td>
+      <td>ハイフン / 空白を除去して投入</td>
+    </tr>
+    <tr>
+      <td class="field">元付確認日</td>
+      <td class="dom">name="${S}mototsukeKakuninDate}"</td>
+      <td>—</td>
+      <td><span class="pill fixed">入稿当日</span> (<code>yyyy/MM/dd</code>)</td>
+    </tr>
+    <tr>
+      <td class="field">貴社物件コード</td>
+      <td class="dom">name="${S}kishaBukkenCd1}"</td>
+      <td class="src">物件番号</td>
+      <td><code>"fng" + reinsId</code> 形式 (例: <code>fng100139017573</code>)</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec15"><span class="num">15</span>開口向き (バルコニー方向)</h2>
+
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">開口向き</td>
+      <td class="dom">kaikomukiKbnCd radio<br>8 択</td>
+      <td class="src">バルコニー方向</td>
+      <td>
+        マップ:<br>
+        北→0 / 北東→1 / 東→2 / 南東/東南→3 / 南→4 / 南西/西南→5 / 西→6 / 北西/西北→7<br>
+        該当なしならスキップ。
+      </td>
+    </tr>
+    <tr>
+      <td class="field">物件名特記フラグ</td>
+      <td class="dom">id="bukkenNmTokkiFlg" checkbox</td>
+      <td>—</td>
+      <td><span class="pill fixed">常に ON</span> (名寄せスコア対象の可能性あり)</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec16"><span class="num">16</span>ネット掲載 / スマピク / 見学予約 等</h2>
+
+<table>
+  <thead><tr><th style="width:22%">label</th><th style="width:30%">DOM</th><th style="width:14%">設定</th><th>備考</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">ネット掲載</td>
+      <td class="dom">id="shijiIsize" select</td>
+      <td><span class="pill fixed">value=3 (保留)</span></td>
+      <td>掲載=1 / 保留=3。SUUMO/HOMES 連携前なので「保留」固定</td>
+    </tr>
+    <tr>
+      <td class="field">スマピク掲載</td>
+      <td class="dom">id/name にラベル "スマピク" を含む checkbox を DOM 探索</td>
+      <td><span class="pill fixed">ON</span></td>
+      <td>セレクタ揺れ対応: <code>sumapikuFlg</code> / <code>smapikuFlg</code> / <code>[name*="sumapiku"]</code> / label テキスト "スマピク" を順に試行</td>
+    </tr>
+    <tr>
+      <td class="field">見学予約</td>
+      <td class="dom">id="kengakuYoyaku" checkbox</td>
+      <td><span class="pill fixed">ON</span></td>
+      <td>ネット掲載=1 時は必須。保留時も先方運用で常時 ON</td>
+    </tr>
+    <tr>
+      <td class="field">店舗案内ピックアップ</td>
+      <td class="dom">id="tenpiku" checkbox</td>
+      <td><span class="pill fixed">ON</span></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td class="field">得意なエリア枠</td>
+      <td class="dom">id="tokueri" checkbox</td>
+      <td><span class="pill fixed">ON</span></td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec17"><span class="num">17</span>テキスト系</h2>
+
+<blockquote class="warn">
+<strong>CRLF +1 char anti-pattern 注意:</strong> textarea 送信時に <code>\n</code> が <code>\r\n</code> に展開されるため、ローカルで <code>slice(0,N)</code> しても改行を含むとサーバ側で N+1 char としてカウントされ「N 文字以内」バリデーションで弾かれる。<strong><code>sanitizeForLength(text, maxLen)</code> を必ず通す</strong> (LF/CRLF を全角スペースに置換してから slice)。
+</blockquote>
+
+<blockquote class="warn">
+<strong>備考 (biko) のみ <code>toFullWidth()</code> 必須:</strong> forrent 備考欄は半角カナ・半角英数字・半角記号が禁止のため、汎用 <code>sanitizeForLength</code> に加えて先に <code>toFullWidth()</code> を通す (catchCopy などは AI 出力の半角英数を保持したいので分離されている)。
+</blockquote>
+
+<table>
+  <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM</th><th style="width:14%">max</th><th>ソース / 変換</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">物件キャッチ</td>
+      <td class="dom">id="bukkenCatch"</td>
+      <td>30 文字 (sanitize)</td>
+      <td>AI 生成 (<code>skills/text-ai.js</code>)</td>
+    </tr>
+    <tr>
+      <td class="field">フリーコメント</td>
+      <td class="dom">id="freeMemo"</td>
+      <td>100 文字 (sanitize)</td>
+      <td>AI 生成</td>
+    </tr>
+    <tr>
+      <td class="field">ネットキャッチ</td>
+      <td class="dom">id="netCatch"</td>
+      <td>30 文字 (sanitize)</td>
+      <td><span class="pill fixed">固定文</span> "お電話番号記載のお客様限定【仲介手数料割引キャンペーン中】"</td>
+    </tr>
+    <tr>
+      <td class="field">ネットフリーメモ</td>
+      <td class="dom">id="netFreeMemo"</td>
+      <td>200 文字 (sanitize)</td>
+      <td><span class="pill fixed">固定文</span> "お急ぎやご質問の方はファンテイズ03-6403-9323大木まで！現地お待ち合わせでご紹介できます！(他社掲載物件まとめて内見可能)家賃交渉、初期費用の相談などお気軽にご相談下さい！"</td>
+    </tr>
+    <tr>
+      <td class="field">特記事項</td>
+      <td class="dom">id="tokkiJiko"</td>
+      <td>200 文字 (toFullWidth + 改行→全角空白 + slice)</td>
+      <td>biko: <code>備考1 + 備考2 + 備考3 + 条件フリー + 設備フリー + その他一時金</code> を space 連結</td>
+    </tr>
+    <tr>
+      <td class="field">特記その他メモ</td>
+      <td class="dom">id="tokkiEtcMemo"</td>
+      <td>200 文字</td>
+      <td>biko と同一文字列</td>
+    </tr>
+    <tr>
+      <td class="field">その他費用 詳細</td>
+      <td class="dom">name="${S}etcHiyoShosai}"</td>
+      <td>200 文字 (sanitize)</td>
+      <td>セクション 12 参照</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec18"><span class="num">18</span>交通 (地図修正 + らくらく / cascade fallback)</h2>
+
+<p>交通は <strong>2 段フォールバック</strong>: 地図修正 + らくらく交通 (推奨) → 失敗時は cascade select。</p>
+
+<h3>Step 1: 地図修正 (chizuShusei)</h3>
+<table>
+  <thead><tr><th style="width:24%">アクション</th><th>詳細</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">地図ボタンクリック</td>
+      <td><code>document.getElementById("chizuShusei").click()</code> → ポップアップ自動オープン</td>
+    </tr>
+    <tr>
+      <td class="field">登録ボタン</td>
+      <td>ポップアップ内 <code>&lt;img onclick="registryXY();"&gt;</code> をクリック (代替: <code>window.registryXY()</code> 直接呼び出し)</td>
+    </tr>
+    <tr>
+      <td class="field">座標反映</td>
+      <td><code>idoFull</code> / <code>keidoFull</code> に座標。未反映時は <code>tmpIdoFull</code> / <code>tmpKeidoFull</code> から手動コピー + <code>idokeidoNoDisp="0"</code> セット</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Step 2: らくらく交通入力 (rakurakuKotsu)</h3>
+<p><code>id="rakurakuKotsu"</code> ボタンクリック → ポップアップが最寄り駅を自動選択。<strong>onclick が FORM POST を含む</strong>ためフレーム離脱を起こす点に注意 (ポップアップハンドリング必須)。</p>
+
+<h3>Fallback: cascade select</h3>
+<table>
+  <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">交通 1-3</td>
+      <td class="dom">name="${S}kotsuList[i].entityCd_X}"<br>(沿線→駅→徒歩分)</td>
+      <td class="src">交通 (配列)</td>
+      <td>各エントリは <code>{沿線, 駅, 徒歩}</code> 形式。cascade で順次選択し駅選択後 1.5 秒待機。</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec19"><span class="num">19</span>周辺環境 (らくらく周辺環境入力)</h2>
+
+<p>緯度経度ベースで Google API 等から施設候補を取得 → 最大 6 件選択 → mainFrame に書き戻し。</p>
+
+<h3>処理フロー</h3>
+<ol>
+  <li>「らくらく周辺環境」ボタンクリック → ポップアップオープン</li>
+  <li>ポップアップ内チェックボックスを優先順で 6 件選択:<br>
+    <code>コンビニ → スーパー → ドラッグストア → 薬局 → 郵便局 → 病院 → 学校</code> の順で 1 件ずつ → 余り枠を残り検出順で埋める</li>
+  <li>「登録 / 確定 / 反映 / OK」ボタンをクリック (id="registButton" / value 一致 / img alt 一致 を順に試行)</li>
+  <li>mainFrame の <code>shuhenKankyoInputForm[0..5].shuhenKankyoNm</code> が更新されたことを確認</li>
+</ol>
+
+<h3>後処理</h3>
+
+<table>
+  <thead><tr><th style="width:30%">処理</th><th>詳細</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">施設名 30 文字クリップ</td>
+      <td>30 文字超は <code>slice(0, 30)</code> (forrent サーバ側「30文字以内」バリデータ回避)。<br><strong>事故例:</strong> 100138990085 / 100139003800 / 100139017573 で「ゆうちょ銀行 本店 ファミリーマート中野江原町一丁目店内出張所」31 文字が REG_FAIL。</td>
+    </tr>
+    <tr>
+      <td class="field">categoryCd 補完</td>
+      <td>ポップアップが categoryCd を埋めなかったスロットを施設名キーワードから推定:<br>
+        コンビニ系 (セブン/ファミマ/ローソン/ミニストップ) → 060203<br>
+        スーパー系 (マルエツ/まいばすけっと/成城石井/ライフ) → 060202<br>
+        ドラッグ (スギ/マツモトキヨシ) → 060204<br>
+        病院 / クリニック / 医院 → 060210<br>
+        学校 / 小学校 / 中学校 → 060207<br>
+        郵便局 → 060211<br>
+        飲食 / レストラン → 060218<br>
+        フォールバック: ショッピングセンター 060201
+      </td>
+    </tr>
+    <tr>
+      <td class="field">destination 同期</td>
+      <td><code>shuhenKankyoInputForm[i].shuhenKankyoNm</code> → <code>destination${i+1}</code> にコピー (一部経路で表示用 destination が空のまま残る事例対策、non-critical)</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sec20"><span class="num">20</span>特徴項目チェックボックス (categoryTokuchoCd)</h2>
+
+<p>REINS 設備系テキスト + 建物属性から自動で多数の特徴項目 checkbox を ON にする。
+2 系統で導出: (A) キーワード辞書による文字列マッチ、(B) 建物属性からの推定。</p>
+
+<h3>(A) キーワード辞書 — <code>SETSUBI_TO_TOKUCHO</code> (140+ エントリ)</h3>
+<p>スキャン対象: <code>設備フリー / 設備 / 条件フリー / 備考1 / 備考2 / 備考3 / その他一時金</code>。1 キーワードが 1 つ以上の category code にマッピングされる。</p>
+
+<details>
+  <summary>全 140+ キーワードを開く (カテゴリ別)</summary>
+  <div style="padding:12px 14px;">
+
+  <h4>交通・立地</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>始発駅</td><td>0101</td></tr>
+    <tr><td>2駅</td><td>0102</td></tr>
+    <tr><td>2沿線</td><td>0103</td></tr>
+    <tr><td>3駅</td><td>0104</td></tr>
+    <tr><td>3沿線</td><td>0105</td></tr>
+    <tr><td>駅前</td><td>0110</td></tr>
+    <tr><td>オーシャンビュー</td><td>0118</td></tr>
+    <tr><td>リバーサイド</td><td>0119</td></tr>
+    <tr><td>閑静</td><td>0122</td></tr>
+  </tbody></table>
+
+  <h4>構造・建物</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>耐震</td><td>0201</td></tr>
+    <tr><td>制震</td><td>0202</td></tr>
+    <tr><td>免震</td><td>0203</td></tr>
+    <tr><td>二重床</td><td>0208</td></tr>
+    <tr><td>二重天井</td><td>0209</td></tr>
+    <tr><td>高気密</td><td>0217</td></tr>
+    <tr><td>高断熱</td><td>0218</td></tr>
+    <tr><td>平屋</td><td>0230</td></tr>
+    <tr><td>タワー</td><td>0231</td></tr>
+    <tr><td>デザイナーズ</td><td>0233</td></tr>
+    <tr><td>吹抜</td><td>0246</td></tr>
+    <tr><td>天井高2.5</td><td>0247</td></tr>
+    <tr><td>バリアフリー</td><td>0252</td></tr>
+    <tr><td>分譲賃貸 / 分譲</td><td>0256</td></tr>
+    <tr><td>ロフト</td><td>1326</td></tr>
+    <tr><td>メゾネット</td><td>1327</td></tr>
+  </tbody></table>
+
+  <h4>共用部</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>エレベーター / エレベータ</td><td>0501</td></tr>
+    <tr><td>24時間ゴミ</td><td>0516</td></tr>
+    <tr><td>宅配ボックス</td><td>0517</td></tr>
+    <tr><td>コインランドリー</td><td>0520</td></tr>
+    <tr><td>フィットネス / ジム</td><td>0523</td></tr>
+    <tr><td>ゲストルーム</td><td>0524</td></tr>
+    <tr><td>ラウンジ</td><td>0525</td></tr>
+    <tr><td>キッズルーム</td><td>0526</td></tr>
+    <tr><td>敷地内ごみ</td><td>0527</td></tr>
+    <tr><td>屋上</td><td>0528</td></tr>
+    <tr><td>平面駐車</td><td>0813</td></tr>
+    <tr><td>駐輪場</td><td>0816</td></tr>
+    <tr><td>バイク置場</td><td>0817</td></tr>
+    <tr><td>トランクルーム</td><td>2223</td></tr>
+  </tbody></table>
+
+  <h4>セキュリティ</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>オートロック</td><td>1201</td></tr>
+    <tr><td>ダブルロック</td><td>1202</td></tr>
+    <tr><td>ディンプルキー / ディンプル</td><td>1203</td></tr>
+    <tr><td>カードキー</td><td>1204</td></tr>
+    <tr><td>電子ロック</td><td>1205</td></tr>
+    <tr><td>電子キー</td><td>1206</td></tr>
+    <tr><td>防犯カメラ</td><td>1211</td></tr>
+    <tr><td>防犯ガラス</td><td>1212</td></tr>
+    <tr><td>24時間管理 / 管理人 / 管理人常駐</td><td>1215</td></tr>
+    <tr><td>コンシェルジュ</td><td>1216</td></tr>
+    <tr><td>セキュリティ / セキュリティ会社</td><td>1218</td></tr>
+    <tr><td>TVインターホン / モニター付きインターホン / TVモニタ / モニタ付 / インターホン</td><td>2414</td></tr>
+  </tbody></table>
+
+  <h4>居室</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>南向き</td><td>1001</td></tr>
+    <tr><td>角部屋 / 角住戸</td><td>1007</td></tr>
+    <tr><td>防音室</td><td>1320</td></tr>
+    <tr><td>書斎</td><td>1323</td></tr>
+    <tr><td>サンルーム</td><td>1324</td></tr>
+    <tr><td>玄関ポーチ</td><td>1328</td></tr>
+    <tr><td>振分</td><td>1331</td></tr>
+    <tr><td>全居室洋室</td><td>1333</td></tr>
+    <tr><td>和室</td><td>1311</td></tr>
+  </tbody></table>
+
+  <h4>キッチン</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>システムキッチン</td><td>1401</td></tr>
+    <tr><td>独立型キッチン / 独立キッチン</td><td>1402</td></tr>
+    <tr><td>カウンターキッチン / 対面式キッチン / 対面式</td><td>1403</td></tr>
+    <tr><td>アイランドキッチン</td><td>1408</td></tr>
+    <tr><td>ガスコンロ</td><td>1412</td></tr>
+    <tr><td>ガスレンジ</td><td>1413</td></tr>
+    <tr><td>2口コンロ / 2口 / コンロ2口</td><td>1414</td></tr>
+    <tr><td>3口以上 / 3口 / ガスコンロ（３口以上）</td><td>1415</td></tr>
+    <tr><td>ＩＨ / IH</td><td>1416</td></tr>
+    <tr><td>グリル</td><td>1418</td></tr>
+    <tr><td>ガラストップ</td><td>1421</td></tr>
+    <tr><td>食器洗 / 食洗 / 食洗機</td><td>1430</td></tr>
+    <tr><td>食器棚</td><td>1431</td></tr>
+    <tr><td>浄水器</td><td>1433</td></tr>
+    <tr><td>ディスポーザー</td><td>1434</td></tr>
+    <tr><td>都市ガス</td><td>1436</td></tr>
+    <tr><td>プロパン</td><td>1437</td></tr>
+  </tbody></table>
+
+  <h4>バス・トイレ・洗面</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>バストイレ別 / BT別</td><td>1501</td></tr>
+    <tr><td>浴室1坪</td><td>1502</td></tr>
+    <tr><td>脱衣所 / 脱衣</td><td>1503</td></tr>
+    <tr><td>オートバス / 自動湯張</td><td>1504</td></tr>
+    <tr><td>追い焚き / 追焚 / 追い炊き / おいだき</td><td>1505</td></tr>
+    <tr><td>浴室乾燥機 / 浴室乾燥</td><td>1507</td></tr>
+    <tr><td>ミストサウナ</td><td>1513</td></tr>
+    <tr><td>シャワールーム</td><td>1518</td></tr>
+    <tr><td>トイレ2ヶ所</td><td>1601</td></tr>
+    <tr><td>温水洗浄便座 / ウォシュレット</td><td>1603</td></tr>
+    <tr><td>タンクレス</td><td>1604</td></tr>
+    <tr><td>独立洗面 / 洗面所独立</td><td>1701</td></tr>
+    <tr><td>洗面化粧台</td><td>1707</td></tr>
+    <tr><td>三面鏡</td><td>1708</td></tr>
+    <tr><td>シャワー付洗面</td><td>1710</td></tr>
+  </tbody></table>
+
+  <h4>冷暖房・換気 / 電気</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>24時間換気</td><td>1801</td></tr>
+    <tr><td>床暖房</td><td>1806</td></tr>
+    <tr><td>蓄熱</td><td>1808</td></tr>
+    <tr><td>オール電化</td><td>1901</td></tr>
+    <tr><td>太陽光</td><td>1902</td></tr>
+    <tr><td>エコキュート</td><td>1904</td></tr>
+    <tr><td>エコジョーズ</td><td>1905</td></tr>
+    <tr><td>エアコン</td><td>2801</td></tr>
+  </tbody></table>
+
+  <h4>バルコニー</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>バルコニー / ベランダ</td><td>2001</td></tr>
+    <tr><td>ルーフバルコニー</td><td>2002</td></tr>
+    <tr><td>ワイドバルコニー</td><td>2003</td></tr>
+    <tr><td>ウッドデッキ</td><td>2011</td></tr>
+    <tr><td>テラス</td><td>2012</td></tr>
+  </tbody></table>
+
+  <h4>室内設備 / 収納</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>フローリング</td><td>2101</td></tr>
+    <tr><td>クッションフロア</td><td>2105</td></tr>
+    <tr><td>無垢材</td><td>2107</td></tr>
+    <tr><td>琉球畳</td><td>2110</td></tr>
+    <tr><td>出窓</td><td>2115</td></tr>
+    <tr><td>雨戸</td><td>2116</td></tr>
+    <tr><td>シャッター</td><td>2117</td></tr>
+    <tr><td>複層ガラス / ペアガラス / 二重サッシ / ペアサッシ</td><td>2122</td></tr>
+    <tr><td>室内洗濯 / 洗濯機置場</td><td>2129</td></tr>
+    <tr><td>室内物干</td><td>2130</td></tr>
+    <tr><td>シーリングファン</td><td>2132</td></tr>
+    <tr><td>クロゼット</td><td>2201</td></tr>
+    <tr><td>ウォークインクロゼット / ウォークイン / WIC / W.I.C / W.I.C.</td><td>2204</td></tr>
+    <tr><td>ウォークスルー</td><td>2205</td></tr>
+    <tr><td>シューズボックス</td><td>2207</td></tr>
+    <tr><td>シューズクローゼット</td><td>2209</td></tr>
+    <tr><td>納戸</td><td>2215</td></tr>
+    <tr><td>パントリー</td><td>2216</td></tr>
+    <tr><td>床下収納</td><td>2221</td></tr>
+  </tbody></table>
+
+  <h4>通信</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>BS / CS</td><td>2401</td></tr>
+    <tr><td>CATV</td><td>2404</td></tr>
+    <tr><td>ネット使用料不要 / 無料インターネット / ネット無料</td><td>2406</td></tr>
+    <tr><td>インターネット / 高速ネット / Wi-Fi / WiFi</td><td>2408</td></tr>
+    <tr><td>光ファイバー</td><td>2410</td></tr>
+    <tr><td>LAN</td><td>2413</td></tr>
+  </tbody></table>
+
+  <h4>リフォーム / 条件</h4>
+  <table><thead><tr><th>keyword</th><th>code</th></tr></thead><tbody>
+    <tr><td>リフォーム済 / ルームクリーニング / クリーニング済</td><td>2601</td></tr>
+    <tr><td>リノベーション / リノベ</td><td>2609</td></tr>
+    <tr><td>即入居</td><td>2701</td></tr>
+    <tr><td>2人入居可 / 二人入居可</td><td>2704</td></tr>
+    <tr><td>ペット / ペット可 / ペット相談</td><td>2705</td></tr>
+    <tr><td>女性限定 / 女性専用</td><td>2706</td></tr>
+    <tr><td>ルームシェア</td><td>2709</td></tr>
+    <tr><td>事務所</td><td>2710</td></tr>
+    <tr><td>楽器 / 楽器可 / 楽器相談</td><td>2711</td></tr>
+    <tr><td>保証人不要</td><td>2724</td></tr>
+    <tr><td>保証会社</td><td>2725</td></tr>
+    <tr><td>フリーレント</td><td>2732</td></tr>
+    <tr><td>家賃カード</td><td>2733</td></tr>
+    <tr><td>初期費用カード / クレジットカード</td><td>2734</td></tr>
+    <tr><td>DIY</td><td>2736</td></tr>
+    <tr><td>家具付 / 家具</td><td>2815</td></tr>
+    <tr><td>照明付</td><td>2817</td></tr>
+    <tr><td>眺望</td><td>2901</td></tr>
+    <tr><td>通風</td><td>2902</td></tr>
+    <tr><td>陽当り / 日当たり</td><td>2903</td></tr>
+  </tbody></table>
+  </div>
+</details>
+
+<h3>(B) 建物属性からの推定 — <code>inferTokuchoFromBuilding</code></h3>
+
+<table>
+  <thead><tr><th style="width:30%">条件</th><th style="width:14%">付与 code</th><th>意味</th></tr></thead>
+  <tbody>
+    <tr><td>地上階層 ≥ 4 階</td><td>0501</td><td>エレベーター (4階以上は事実上必須)</td></tr>
+    <tr><td>交通配列長 ≥ 2</td><td>0102</td><td>2 駅利用可</td></tr>
+    <tr><td>交通配列長 ≥ 3</td><td>0104</td><td>3 駅以上利用可</td></tr>
+    <tr><td>沿線ユニーク数 ≥ 2</td><td>0103</td><td>2 沿線利用可</td></tr>
+    <tr><td>沿線ユニーク数 ≥ 3</td><td>0105</td><td>3 沿線以上利用可</td></tr>
+    <tr><td>徒歩 ≤ 5 分のエントリあり</td><td>0129</td><td>駅徒歩 5 分以内</td></tr>
+    <tr><td>徒歩 ≤ 10 分のエントリあり</td><td>0130</td><td>駅徒歩 10 分以内</td></tr>
+    <tr><td>バルコニー方向 = 南東/東南</td><td>1002 + 2005</td><td>南東向き + 採光優れる</td></tr>
+    <tr><td>バルコニー方向 = 南西/西南</td><td>1003 + 2005</td><td>南西向き + 採光優れる</td></tr>
+    <tr><td>バルコニー方向 = 南</td><td>1001 + 2005</td><td>南向き + 採光優れる</td></tr>
+    <tr><td>バルコニー方向に "角" を含む</td><td>1007</td><td>角部屋</td></tr>
+    <tr><td>敷金 "なし/0/ー/空"</td><td>2712</td><td>敷金不要</td></tr>
+    <tr><td>敷金 "1ヶ月"</td><td>2713</td><td>敷金 1 ヶ月</td></tr>
+    <tr><td>敷金 "2ヶ月"</td><td>2714</td><td>敷金 2 ヶ月</td></tr>
+    <tr><td>礼金 "なし/0/ー/空"</td><td>2719</td><td>礼金不要</td></tr>
+    <tr><td>礼金 "1ヶ月"</td><td>2720</td><td>礼金 1 ヶ月</td></tr>
+    <tr><td>礼金 "2ヶ月"</td><td>2721</td><td>礼金 2 ヶ月</td></tr>
+    <tr><td>敷礼両方なし</td><td>2718</td><td>敷金・礼金不要</td></tr>
+    <tr><td>入居時期に "即" 含む</td><td>2701</td><td>即入居可</td></tr>
+    <tr><td>築 ≤ 2 年</td><td>0701</td><td>築 2 年以内</td></tr>
+    <tr><td>築 ≤ 3 年</td><td>0702</td><td>築 3 年以内</td></tr>
+    <tr><td>築 ≤ 5 年</td><td>0703</td><td>築 5 年以内</td></tr>
+    <tr><td>条件フリー+備考3 に "保証人不要"</td><td>2724</td><td>保証人不要</td></tr>
+    <tr><td>"保証会社"</td><td>2725</td><td>保証会社</td></tr>
+    <tr><td>"フリーレント"</td><td>2732</td><td>フリーレント</td></tr>
+    <tr><td>"DIY"</td><td>2736</td><td>DIY 可</td></tr>
+    <tr><td>"リノベ"</td><td>2609</td><td>リノベーション</td></tr>
+    <tr><td>"リフォーム"</td><td>2601</td><td>リフォーム済</td></tr>
+    <tr><td>駐車場在否 = "有/空有"</td><td>0816</td><td>駐輪場 (駐車場ありなら駐輪場も併設の蓋然性大)</td></tr>
+  </tbody>
+</table>
+
+<blockquote class="info">
+checkbox 設定は <code>input[type="checkbox"][name="${S}categoryTokuchoCd}"][value="{code}"]</code> を querySelector。既に checked のものはスキップ。
+</blockquote>
+
+<!-- ============================================ -->
+<h2 id="sec21"><span class="num">21</span>画像アップロード</h2>
+
+<h3>スロット一覧</h3>
+<table>
+  <thead><tr><th style="width:18%">用途</th><th style="width:26%">file input name</th><th style="width:24%">カテゴリ / メモ</th><th>個数</th></tr></thead>
+  <tbody>
+    <tr><td class="field">外観</td><td class="dom">file_up_gaikan</td><td class="dom">gaikanMemo</td><td>1 (固定)</td></tr>
+    <tr><td class="field">パース</td><td class="dom">file_up_perth</td><td class="dom">perthMemo</td><td>1 (固定)</td></tr>
+    <tr><td class="field">室内 (代表)</td><td class="dom">file_up_shitsunai</td><td class="dom">shitsunaiShashinCategory + shitsunaiMemo</td><td>1 (固定)</td></tr>
+    <tr><td class="field">地図</td><td class="dom">file_up_map</td><td class="dom">—</td><td>1 (固定)</td></tr>
+    <tr><td class="field">周辺環境 (固定)</td><td class="dom">file_up_shuhenkankyo</td><td class="dom">—</td><td>1 (固定)</td></tr>
+    <tr><td class="field">写真 (room)</td><td class="dom">file_up_shashin{1-3}</td><td class="dom">shashin{N}Category + shashin{N}Memo</td><td>最大 3</td></tr>
+    <tr><td class="field">追加画像</td><td class="dom">file_up_tsuikaGazo{1-8}</td><td class="dom">tsuikaGazo{N}Category + memo (id=tsuikaGazo{N})</td><td>最大 8</td></tr>
+    <tr><td class="field">周辺施設別</td><td class="dom">file_up_shuhenKankyo{1-6}</td><td class="dom">categoryCd + shuhenKankyoNm + kyori</td><td>最大 6</td></tr>
+  </tbody>
+</table>
+
+<h3>要素特定ロジック (<code>setFileInput</code>)</h3>
+<p>forrent はフォーム内で同名 file input が最大 8 回重複するため、表示中セクション内の要素を確実に特定する。</p>
+<ol>
+  <li><code>document.querySelectorAll(`input[type="file"][name="${name}"]`)</code> で全候補取得</li>
+  <li>各要素について <code>visible</code> (display ≠ none && visibility ≠ hidden) / <code>parentVisible</code> / <code>hasSize</code> (width&gt;0 && height&gt;0) を評価</li>
+  <li>優先順位: visible + parentVisible + hasSize → visible + parentVisible → visible → first</li>
+  <li>選ばれた要素に <code>setInputFiles(filePath)</code></li>
+</ol>
+
+<!-- ============================================ -->
+<h2 id="appendix"><span class="num">A-E</span>付録</h2>
+
+<h3>A. 構造コード (<code>STRUCTURE_CODE</code>)</h3>
+<table>
+  <thead><tr><th>キー (REINS)</th><th>code</th><th>意味</th></tr></thead>
+  <tbody>
+    <tr><td>RC / ＲＣ / 鉄筋コンクリート / 鉄筋コン</td><td>01</td><td>鉄筋コンクリート</td></tr>
+    <tr><td>SRC / ＳＲＣ / 鉄骨鉄筋コンクリート / 鉄骨鉄筋</td><td>02</td><td>鉄骨鉄筋コンクリート</td></tr>
+    <tr><td>PC / プレコン</td><td>03</td><td>プレストレストコンクリート</td></tr>
+    <tr><td>HPC / 鉄骨プレ</td><td>04</td><td>鉄骨プレストレストコンクリート</td></tr>
+    <tr><td>W / 木造</td><td>05</td><td>木造</td></tr>
+    <tr><td>S / Ｓ / 鉄骨</td><td>06</td><td>鉄骨造</td></tr>
+    <tr><td>LS / 軽量鉄骨</td><td>07</td><td>軽量鉄骨</td></tr>
+    <tr><td>ALC / 気泡コン</td><td>08</td><td>ALC (気泡コンクリート)</td></tr>
+    <tr><td>CB / ブロック</td><td>09</td><td>コンクリートブロック</td></tr>
+    <tr><td>その他 / マッチなし</td><td>99</td><td>その他 (フォールバック)</td></tr>
+  </tbody>
+</table>
+
+<h3>B. 間取りタイプコード (<code>MADORI_TYPE_CODE</code>)</h3>
+<table>
+  <thead><tr><th>キー (REINS)</th><th>code</th></tr></thead>
+  <tbody>
+    <tr><td>ワンルーム</td><td>01</td></tr>
+    <tr><td>K / Ｋ</td><td>02</td></tr>
+    <tr><td>DK / ＤＫ</td><td>03</td></tr>
+    <tr><td>SDK</td><td>04</td></tr>
+    <tr><td>LDK / ＬＤＫ</td><td>05</td></tr>
+    <tr><td>SLDK</td><td>06</td></tr>
+    <tr><td>LK</td><td>07</td></tr>
+    <tr><td>SK</td><td>08</td></tr>
+    <tr><td>SLK</td><td>09</td></tr>
+  </tbody>
+</table>
+
+<h3>C. 周辺環境カテゴリコード (<code>SHUHEN_CATEGORY_CODES</code>)</h3>
+<table>
+  <thead><tr><th>code</th><th>カテゴリ</th></tr></thead>
+  <tbody>
+    <tr><td>060201</td><td>ショッピングセンター</td></tr>
+    <tr><td>060202</td><td>スーパー</td></tr>
+    <tr><td>060203</td><td>コンビニ</td></tr>
+    <tr><td>060204</td><td>ドラッグストア</td></tr>
+    <tr><td>060207</td><td>学校</td></tr>
+    <tr><td>060210</td><td>病院</td></tr>
+    <tr><td>060211</td><td>郵便局</td></tr>
+    <tr><td>060218</td><td>飲食店</td></tr>
+  </tbody>
+</table>
+
+<h3>D. テキスト sanitize ルール</h3>
+
+<table>
+  <thead><tr><th style="width:30%">関数</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field"><code>norm(str)</code></td>
+      <td>全角英数字 → 半角、全角空白 → 半角空白、trim。基本正規化。</td>
+    </tr>
+    <tr>
+      <td class="field"><code>toFullWidth(str)</code></td>
+      <td>半角カナ + 半角 ASCII (0x20-0x7E) を全角化。<strong>biko 専用</strong> (備考欄の半角禁止対応)。dakuten/handakuten 2 文字組合せ ("ｶﾞ"→"ガ") も処理。</td>
+    </tr>
+    <tr>
+      <td class="field"><code>sanitizeForLength(text, maxLen)</code></td>
+      <td>LF/CRLF → 全角スペース置換 → <code>slice(0, maxLen)</code>。<strong>文字数制限のある全フィールドで必須</strong> (catchCopy / freeComment / netCatch / netFreeMemo / etcHiyoShosai 等)。<br>CRLF +1 char anti-pattern (POST 時に <code>\n</code> が <code>\r\n</code> に展開され server side で +1 char 扱い) を予防。</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>E. 文字数制限一覧</h3>
+
+<table>
+  <thead><tr><th>field</th><th>max</th><th>charset</th><th>備考</th></tr></thead>
+  <tbody>
+    <tr><td class="field">物件名 (bukkenNm)</td><td>35</td><td>自由</td><td>建物名そのまま</td></tr>
+    <tr><td class="field">地上階建 (kai)</td><td>2</td><td>半角数字</td><td>—</td></tr>
+    <tr><td class="field">地下階建 (chikaInput)</td><td>1</td><td>半角数字</td><td>—</td></tr>
+    <tr><td class="field">階部分 (kaibubun)</td><td>5</td><td>半角数字</td><td>—</td></tr>
+    <tr><td class="field">号室 (heyaNoInput)</td><td>10</td><td>半角 ASCII 21-7E のみ</td><td>正規表現で事前チェック</td></tr>
+    <tr><td class="field">築年 (Wareki2Seireki1)</td><td>4</td><td>半角数字</td><td>西暦 4 桁</td></tr>
+    <tr><td class="field">築月 (chikuGetsu)</td><td>2</td><td>半角数字</td><td>—</td></tr>
+    <tr><td class="field">部屋数 (heyaCntInput)</td><td>2</td><td>半角数字</td><td>ワンルーム時は入力不可</td></tr>
+    <tr><td class="field">面積整数 (mensekiIntegerInput)</td><td>3</td><td>半角数字</td><td>—</td></tr>
+    <tr><td class="field">面積小数 (mensekiDecimalInput)</td><td>2</td><td>半角数字</td><td>—</td></tr>
+    <tr><td class="field">元付業者名 (mototsukeGyoshaNm)</td><td>30</td><td>自由</td><td>商号を slice(0,30)</td></tr>
+    <tr><td class="field">物件キャッチ (bukkenCatch)</td><td>30</td><td>自由</td><td>sanitize 必須</td></tr>
+    <tr><td class="field">ネットキャッチ (netCatch)</td><td>30</td><td>自由</td><td>固定文</td></tr>
+    <tr><td class="field">周辺施設名 (shuhenKankyoNm)</td><td>30</td><td>自由</td><td>30 文字超は slice 強制</td></tr>
+    <tr><td class="field">フリーコメント (freeMemo)</td><td>100</td><td>自由</td><td>sanitize 必須</td></tr>
+    <tr><td class="field">ネットフリーメモ (netFreeMemo)</td><td>200</td><td>自由</td><td>固定文</td></tr>
+    <tr><td class="field">特記事項 (tokkiJiko)</td><td>200</td><td>全角のみ</td><td>toFullWidth + 改行除去 + slice</td></tr>
+    <tr><td class="field">特記その他メモ (tokkiEtcMemo)</td><td>200</td><td>全角のみ</td><td>同上 (biko と同一)</td></tr>
+    <tr><td class="field">その他費用詳細 (etcHiyoShosai)</td><td>200</td><td>自由</td><td>sanitize 必須</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2 id="checklist">セルフチェックリスト (新規入稿前に kento が確認)</h2>
+
+<blockquote class="ok">
+ここに挙げた項目は過去 REG_FAIL になった経験から抽出。新しい物件種目 / エッジケースで失敗したら gotchas.md に追記して将来チェックリストに昇格。
+</blockquote>
+
+<ol>
+  <li><strong>REINS 必須 3 項目</strong>: 建物名 / 部屋番号 / 使用部分面積 (マンション・アパートの場合) が全て空でないか</li>
+  <li><strong>物件種別</strong>: REINS 物件種目が「マンション」かつ 建物構造が木造/軽量鉄骨 → アパート(02) になっているか</li>
+  <li><strong>築年月の月精度</strong>: 築 12 ヶ月未満が新築判定、それ以上は中古に切替わっているか (年単位だと事故)</li>
+  <li><strong>所在地名２の丁目分離</strong>: "○○町１丁目" 形式の場合、町村と丁目が正しく分離されたか (azaList は全角数字必須)</li>
+  <li><strong>番地</strong>: 空でも "-" が入っているか (新築・番地未確定対応)</li>
+  <li><strong>号室</strong>: 半角 ASCII 10 桁以内か (全角や 11 桁以上はスキップされる)</li>
+  <li><strong>周辺施設名</strong>: 30 文字超のものが slice されているか (Google Maps 由来の長い施設名で REG_FAIL 多発)</li>
+  <li><strong>テキスト系</strong>: 改行を含む長文が sanitize されているか (CRLF +1 char anti-pattern)</li>
+  <li><strong>備考系</strong>: 半角カナ・半角英数字が全角化されているか</li>
+  <li><strong>その他費用合計</strong>: 物確値が異常値 (1 円未満 / 50 万円超) でないか</li>
+  <li><strong>取引態様 / 管理形態 / 省エネ / BB</strong>: 固定値 (4 / 3 / 0 / 1) が確実に入っているか</li>
+  <li><strong>会社間流通フラグ</strong>: 物件名・部屋番号・詳細住所が全て OFF か (ファンテイズ社方針)</li>
+  <li><strong>ネット掲載</strong>: "保留(3)" になっているか (SUUMO/HOMES 連携前に "掲載(1)" になっていると事故)</li>
+  <li><strong>貴社物件コード</strong>: <code>fng{reinsId}</code> 形式か</li>
+</ol>
+
+<div class="footer">
+出典コード:
+<code>skills/forrent/fill-form.js</code> /
+<code>fill-texts.js</code> /
+<code>fill-transport.js</code> /
+<code>fill-shuhen.js</code> /
+<code>fill-tokucho.js</code> /
+<code>fill-images.js</code> /
+<code>validate.js</code> /
+<code>constants.js</code> /
+<code>config/forrent-required.spec.json</code>
+<br>
+このドキュメントはコードから手動で抽出。実装変更時は同期させること (理想的にはコードから auto-generate)。
+</div>
+
+</div>
+</body>
+</html>

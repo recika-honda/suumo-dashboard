@@ -27,6 +27,7 @@ const { Client: NotionClient } = require("@notionhq/client");
 const reins = require("../skills/reins");
 const slack = require("../skills/slack");
 const { resolveNotionStatus } = require("./pipeline-statuses");
+const { buildFeedbackProperties } = require("./lib/notion-feedback");
 const { runReinsExtract } = require("./stages/01-reins-extract");
 const { runImagesDownload } = require("./stages/02-images-download");
 const { runImagesClassify } = require("./stages/03-images-classify");
@@ -138,12 +139,34 @@ async function fetchPendingProperties() {
 }
 
 // ── Notion: update Status ────────────────────────────────
-async function updateNotionStatus(pageId, statusName) {
+// statusName 単独 update (旧 API) + 失敗系の feedback (入稿失敗理由 + 失敗カテゴリ) を同送。
+// "入稿失敗理由" / "失敗カテゴリ" プロパティが Notion DB に未追加でも parts に分けて
+// 段階的に試すことで、Status update は確実に通すよう設計。
+async function updateNotionStatus(pageId, statusName, result = null) {
+  const baseProps = { Status: { status: { name: statusName } } };
+  const feedback = result && statusName === "入稿失敗" ? buildFeedbackProperties(result) : {};
+
+  // 1) Status + feedback を一括で試す
+  try {
+    await notion.pages.update({
+      page_id: pageId,
+      properties: { ...baseProps, ...feedback },
+    });
+    return;
+  } catch (e) {
+    // 失敗カテゴリ / 入稿失敗理由 が DB に未追加 (Notion 側で kento の初期セットアップ未済)
+    // または select option 名の不一致だと properties 一括 update が拒否される。
+    // その場合は Status だけは確実に反映する。
+    if (Object.keys(feedback).length === 0) throw e;
+    console.error(
+      `[notion] feedback プロパティ書き込み失敗 → Status のみで再試行: ${e.message.slice(0, 120)}`
+    );
+  }
+
+  // 2) Status だけで再試行 (feedback プロパティが未整備のフォールバック)
   await notion.pages.update({
     page_id: pageId,
-    properties: {
-      Status: { status: { name: statusName } },
-    },
+    properties: baseProps,
   });
 }
 
@@ -321,6 +344,7 @@ async function main() {
 
     result.duration = Math.round((Date.now() - startTime) / 1000);
     result.runDir = runLog.dir;
+    result.pageId = pageId;
     runLog.finish({
       status: result.status,
       propertyName: result.propertyName,
@@ -337,7 +361,8 @@ async function main() {
     const notionStatus = resolveNotionStatus(result.status);
     if (notionStatus) {
       try {
-        await updateNotionStatus(pageId, notionStatus);
+        // 「入稿失敗」のときは入稿失敗理由 + 失敗カテゴリも書き戻す (Phase 7.5)
+        await updateNotionStatus(pageId, notionStatus, result);
         if (result.status === "SUCCESS") {
           console.error(`  [notion] Status → ${notionStatus}`);
         } else {

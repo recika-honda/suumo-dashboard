@@ -11,7 +11,10 @@
   <h1>SUUMO 入稿</h1>
 
   <section>
-    <h2>1. 新規入稿</h2>
+    <header class="section-head">
+      <span class="section-num">01</span>
+      <span class="section-title">新規入稿</span>
+    </header>
     <form id="run-form">
       <input type="text" id="reinsId" inputmode="numeric" pattern="\d+"
              placeholder="REINS 物件番号 (数字のみ)" required autocomplete="off">
@@ -20,23 +23,41 @@
   </section>
 
   <section id="progress-section" hidden>
-    <h2>2. 進捗</h2>
-    <p id="progress-runid" class="muted"></p>
+    <header class="section-head">
+      <span class="section-num">02</span>
+      <span class="section-title">進捗</span>
+      <span class="section-meta" id="progress-meta"></span>
+    </header>
+    <p id="progress-runid"></p>
     <ol id="progress-steps"></ol>
     <p id="progress-result"></p>
   </section>
 
   <section>
-    <h2>3. 履歴 (最新 50 件)</h2>
-    <ul id="history-list"><li class="muted">読み込み中...</li></ul>
+    <header class="section-head">
+      <span class="section-num">03</span>
+      <span class="section-title">履歴</span>
+      <span class="section-meta">latest 50</span>
+    </header>
+    <ul id="history-list"><li class="muted">loading...</li></ul>
   </section>
 </main>
 
 <script>
+// ISO8601 UTC (例: "2026-05-13T03:41:43.906Z") をブラウザのローカル TZ で MM-DD HH:MM に。
+function formatLocalTs(iso) {
+  if (!iso) return '----- --:--';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '----- --:--';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 const form           = document.getElementById('run-form');
 const reinsIdInput   = document.getElementById('reinsId');
 const submitBtn      = form.querySelector('button');
 const progressSection= document.getElementById('progress-section');
+const progressMeta   = document.getElementById('progress-meta');
 const progressRunid  = document.getElementById('progress-runid');
 const progressSteps  = document.getElementById('progress-steps');
 const progressResult = document.getElementById('progress-result');
@@ -50,7 +71,8 @@ form.addEventListener('submit', async (ev) => {
   if (!/^\d+$/.test(reinsId)) return;
 
   progressSection.hidden = false;
-  progressRunid.textContent  = '起動中...';
+  progressMeta.textContent   = 'starting...';
+  progressRunid.textContent  = '';
   progressSteps.innerHTML    = '';
   progressResult.textContent = '';
   submitBtn.disabled = true;
@@ -93,12 +115,14 @@ function startPolling(runId) {
         progressSteps.appendChild(li);
       }
       lastIdx = steps.length - 1;
+      progressMeta.textContent = steps.length + ' events';
 
       if (data.status) {
         clearInterval(pollTimer); pollTimer = null;
         submitBtn.disabled = false;
         const scoreText = data.score ? ' / ' + data.score + 'pt' : '';
         progressResult.textContent = '完了: ' + data.status + scoreText;
+        progressMeta.textContent = steps.length + ' events / done';
         loadHistory();
       }
     } catch (_) { /* ignore transient */ }
@@ -120,10 +144,11 @@ async function loadHistory() {
     }
     for (const h of items) {
       const li = document.createElement('li');
-      const ts = (h.ts || '').slice(0, 16).replace('T', ' ');
+      const ts = formatLocalTs(h.ts);  // ブラウザの JST で MM-DD HH:MM
       const score = h.score ? ' / ' + h.score + 'pt' : '';
-      const name = h.propertyName || h.reinsId || '?';
-      li.textContent = ts + '  ' + name + '  ' + (h.status || '?') + score;
+      const name = (h.propertyName || h.reinsId || '?').slice(0, 24);
+      const status = (h.status || '?').padEnd(8);
+      li.textContent = ts + '   ' + status + '   ' + name + score;
       historyList.appendChild(li);
     }
   } catch (e) {

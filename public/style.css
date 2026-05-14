@@ -1,77 +1,150 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html { -webkit-font-smoothing: antialiased; }
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans",
                "Yu Gothic", "Helvetica Neue", sans-serif;
-  color: #222;
+  color: #111;
   background: #fff;
-  line-height: 1.6;
-  padding: 2rem 1rem;
+  font-size: 15px;
+  line-height: 1.7;
+  font-weight: 400;
+  padding: 4rem 1.5rem;
 }
 
 main {
-  max-width: 720px;
+  max-width: 640px;
   margin: 0 auto;
 }
 
 h1 {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 600;
-  margin-bottom: 2rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid #222;
+  letter-spacing: -0.01em;
+  margin-bottom: 3.5rem;
 }
 
-section { margin-bottom: 2.5rem; }
+section { margin-bottom: 4rem; }
+section:last-of-type { margin-bottom: 0; }
 
-h2 {
-  font-size: 0.95rem;
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.section-num {
+  font-size: 0.7rem;
   font-weight: 500;
-  color: #666;
-  margin-bottom: 0.75rem;
+  color: #999;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
 }
 
-form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.section-title {
+  font-size: 1rem;
+  font-weight: 500;
+  color: #111;
+}
+
+.section-meta {
+  font-size: 0.75rem;
+  color: #999;
+  margin-left: auto;
+  letter-spacing: 0.02em;
+}
+
+form {
+  display: flex;
+  gap: 1.5rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
 
 input[type=text] {
-  flex: 1 1 200px;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #ccc;
+  flex: 1 1 220px;
+  padding: 0.5rem 0;
+  border: none;
+  border-bottom: 1px solid #ddd;
   font: inherit;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: #111;
+  background: transparent;
 }
 
-input[type=text]:focus { outline: 2px solid #222; outline-offset: -1px; }
+input[type=text]:focus {
+  outline: none;
+  border-bottom-color: #111;
+}
+
+input[type=text]::placeholder { color: #bbb; }
 
 button {
-  padding: 0.5rem 1.2rem;
-  background: #222;
-  color: #fff;
+  padding: 0.4rem 0;
+  background: transparent;
+  color: #111;
   border: none;
   font: inherit;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   cursor: pointer;
 }
 
-button:hover:not(:disabled) { background: #444; }
-button:disabled { background: #aaa; cursor: not-allowed; }
+button::after {
+  content: "→";
+  display: inline-block;
+  margin-left: 0.4rem;
+  transition: transform 0.18s ease;
+}
+
+button:hover:not(:disabled)::after {
+  transform: translateX(3px);
+}
+
+button:disabled {
+  color: #bbb;
+  cursor: not-allowed;
+}
 
 ol, ul { list-style: none; padding-left: 0; }
 
 #progress-steps li,
 #history-list li {
-  padding: 0.2rem 0;
+  padding: 0.3rem 0;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.85rem;
-  color: #444;
+  font-size: 0.8rem;
+  color: #333;
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
 }
 
-#progress-steps li::before { content: "→ "; color: #888; }
-#history-list  li::before  { content: "· "; color: #888; }
+#progress-steps li::before,
+#history-list li::before {
+  content: "→";
+  color: #999;
+  flex-shrink: 0;
+}
 
-.muted { color: #999; font-size: 0.85rem; }
+.muted {
+  color: #999;
+  font-size: 0.8rem;
+}
+
+#progress-runid {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: #999;
+  margin-bottom: 0.75rem;
+  letter-spacing: 0.02em;
+}
 
 #progress-result {
-  margin-top: 0.6rem;
+  margin-top: 1.25rem;
   font-weight: 500;
   font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: #111;
 }

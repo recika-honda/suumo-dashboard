@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.recika.fango.archive-runs — daily logs/runs/ archive cleanup
+
+  ポリシー: SUCCESS 7 日 / 失敗 30 日 → tar.gz, 90 日 → archive/yyyy-mm/
+  実行時間: 毎日 03:00 JST (REINS 営業時間 07:00-23:00 外なので入稿 pipeline と競合しない)
+
+  インストール:
+    cp scripts/com.recika.fango.archive-runs.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.recika.fango.archive-runs.plist
+
+  確認:
+    launchctl list | grep recika.fango.archive
+    tail -f logs/archive-runs.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.recika.fango.archive-runs</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Volumes/AgentSSD/04_FANGO/FNG26_AI入稿システム/code/suumo-dashboard/scripts/run-archive-runs.sh</string>
+  </array>
+
+  <!-- 毎日 03:00 (ローカル時間 = JST 想定) -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Volumes/AgentSSD/04_FANGO/FNG26_AI入稿システム/code/suumo-dashboard/logs/archive-runs.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Volumes/AgentSSD/04_FANGO/FNG26_AI入稿システム/code/suumo-dashboard/logs/archive-runs.launchd.err</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

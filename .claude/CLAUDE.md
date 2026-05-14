@@ -10,25 +10,38 @@ REINS-to-forrent.jp listing automation. Vanilla HTML front +薄い Node http サ
 - Anthropic SDK + OpenAI SDK (`skills/image-ai.js`, `skills/text-ai.js`)
 - Sharp / Notion SDK / Slack Web API
 - JavaScript (no TypeScript, no bundler)
+- Tests: `npm test` (= node で test-*.js を順次実行)。**`bun test` は使わない** — bun は `*.test.js` パターンしか拾わず、本プロジェクトの `test-*.js` を素通りする
 
 ## Key Notes
-- Dev / Prod: `node api-server.js` (default port 3456、`PORT=` で上書き可)
+- Dev / Prod: `node api-server.js` (default port 3500、`PORT=` で上書き可)。3456 は別プロジェクトに使われているので避ける (port-routing rule: runtime-board で衝突確認済)
 - 単発入稿 CLI: `node runNyuko.js <reinsId>` — api-server 経由でも内部的に spawn される
 - 3 endpoint: `POST /run` (spawn runNyuko 後 stdout から runId を抽出して返す) / `GET /status/:runId` (run.json をそのまま返す) / `GET /history` (nyuko-history.jsonl の末尾 50 件)
-- Skills layer in `skills/`: reins, forrent, bukaku, google-images, google-maps, image-ai, text-ai, score-checker, suumo-check, transport-filler, slack, forrent-reader
+- Skills layer in `skills/`: reins, forrent (facade), bukaku, google-images, google-maps, image-ai, text-ai, score-checker, suumo-check, transport-filler, slack, forrent-reader
+  - **`skills/forrent.js` は Phase 7 (2026-05-14) で 67 LOC facade に縮減**。実装は `skills/forrent/` 配下 11 モジュール: constants / validate / form-helpers / session / fill-texts / fill-tokucho / fill-transport / fill-images / fill-shuhen / fill-form / register
+  - public API (`require("../skills/forrent")` の export) は完全互換 → stage / api-server 側は無変更
+  - `bukaku.js` は 2026-05-14 に ATBB 代替検討 (100件評価で実用マッチ率 65.2%、大手系列流通契約なしが構造要因) の結果として継続確定。検証資産は `scripts/legacy/atbb/` と `docs/legacy/atbb/`、意思決定は `../../.claude/data/decisions/0001-atbb-route-sunset.md`
 - Batch/operational scripts in `scripts/` (e.g., `reins-to-notion.js`, `dedupe.js`, `migrate-nyuko-status.js`)
 - E2E / smoke / diagnostic scripts: `scripts/legacy/` — 本流フローからは参照されない
 - Requires `.env.local` with REINS/SUUMO credentials, Notion token, Anthropic API key, OpenAI API key, Slack token
+- フロント (`public/`) の見た目を弄るときは `.claude/frontend-style.md` を参照 (functional minimalism 規範)
 
 ## Architecture (2026-05 refactor)
 - `scripts/batch-nyuko.js` は薄い orchestrator (processProperty ~71 行)。パイプラインは `scripts/stages/01..06-*.js` の 6 stage に分割
 - 各 stage I/O は `logs/runs/{ts}_{reinsId}/{stage}/{input,output}.json` に永続化 (`scripts/lib/artifact.js`)
 - 途中再開: `bun run scripts/resume-nyuko.js {runId} --from {stage}` (cache から prior stage 復元、`--from 06` は forrentPage 復元不能で不可)
-- forrent 必須項目: `config/forrent-required.spec.json` + `skills/forrent.js#validateBySpec`。新 field は JSON に entry 追加するだけ (JS 変更不要)
-- 文字数制限フィールド: `skills/forrent.js#sanitizeForLength(text, maxLen)` 経由必須 (CRLF +1 char anti-pattern 予防)。biko だけ toFullWidth 前段が必要で inline 維持
-- ダッシュボード UI (`server.js#runNyuko`) も同じ 6 stage 経由 (Phase 3)。skill 直接呼び出しは `reins.login` (Step 0) のみ。`forrent.X` を server.js から呼ばない
-- 設計正典: `docs/refactor/{contract.md, stages.md, adding-required-field.md}`、各 phase の検証: `docs/refactor/phase{1..4}-verify.md`
+- forrent 必須項目: `config/forrent-required.spec.json` + `skills/forrent` の `validateBySpec` (実体は `skills/forrent/validate.js`)。新 field は JSON に entry 追加するだけ (JS 変更不要)
+- 文字数制限フィールド: `skills/forrent` の `sanitizeForLength(text, maxLen)` (実体は `skills/forrent/fill-texts.js`) 経由必須 (CRLF +1 char anti-pattern 予防)。biko だけ toFullWidth 前段が必要で inline 維持
+- ダッシュボード UI (`api-server.js` → spawn `runNyuko.js`) も同じ 6 stage 経由 (Phase 3 / 6)。skill 直接呼び出しは `reins.login` (Step 0) のみ。`forrent.X` を api-server から呼ばない
+- 設計正典: `docs/refactor/{contract.md, stages.md, adding-required-field.md}`、各 phase の検証: `docs/refactor/phase{1..7}-*.md` + `phase7.5-archive-and-feedback.md`
 - main commit `28245ff` が pre-refactor snapshot。挙動の semantic 等価性を確認する基準点
+
+## Phase 7 / 7.5 (2026-05-14)
+
+- **forrent.js 分割**: 3,136 LOC monolith → 67 LOC facade + 11 サブモジュール (`skills/forrent/`)。facade パターンで public API 維持。詳細: `docs/refactor/phase7-forrent-split.md`
+- **TIMEOUT auto-resume**: watch-nyuko が batch の report から TIMEOUT を検出 → `findResumeStage(runDir)` (`scripts/lib/run-inspect.js`) で次の stage を判定 → `resume-nyuko.js` を spawn して 1 物件 1 回まで自動 retry。履歴は `logs/retries.jsonl`
+- **Notion フィードバック**: batch/watch から Notion を「入稿失敗」フリップ時に「失敗カテゴリ」(Select) + 「入稿失敗理由」(Rich text) も同送。カテゴリ判定は純粋関数 `scripts/lib/notion-feedback.js#categorizeError`。Notion DB にプロパティ未追加でも graceful フォールバックで Status のみは確実に反映
+- **logs/runs アーカイブ**: `scripts/archive-runs.js` で SUCCESS 7d / 失敗 30d → tar.gz、90d → `logs/runs/archive/yyyy-mm/` 移送。launchd で毎日 03:00 自動実行 (`scripts/com.recika.fango.archive-runs.plist`)。`logs/diag/` は調査用 run の隔離先 (本番 `logs/runs/` と分離)
+- **テスト**: `npm test` で 70 cases pass (sanitize-for-length / spec-validator / run-inspect / validate / notion-feedback)
 
 ## Adding UI progress events (Phase 6 update)
 

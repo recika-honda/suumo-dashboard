@@ -22,7 +22,7 @@ const { spawn } = require("child_process");
 
 require("dotenv").config({ path: path.join(__dirname, ".env.local") });
 
-const PORT = parseInt(process.env.PORT || "3456", 10);
+const PORT = parseInt(process.env.PORT || "3500", 10);
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const RUNS_DIR = path.join(ROOT, "logs", "runs");

@@ -10,7 +10,13 @@ const sharp = require("sharp");
 const fs = require("fs");
 const path = require("path");
 
-const openai = new OpenAI();
+// Lazy init: pure helpers (pickFallbackCategory 等) は API key 無しで import 可能にする。
+// クライアント取得は Vision を実際に呼ぶ analyzeAndCropImages / cropMissingCategories 経由のみ。
+let _openai = null;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI();
+  return _openai;
+}
 
 const VISION_MODEL = "gpt-4o-mini";
 
@@ -47,6 +53,29 @@ const SUUMO_CATEGORIES = [
 // 複数画像に同じカテゴリを許可するもの
 const ALLOW_DUPLICATE = new Set(["06", "14", "18", "21"]);
 
+// 不可逆カテゴリ: 他写真から合成できず、誤判定すると名寄せスコアを壊す
+// → fallback で強制充填しない。Vision が確信を持って判定した時だけ採用する
+const IRREVERSIBLE_CATS = new Set(["04", "05"]);
+
+/**
+ * Fallback カテゴリ選択 (Vision が null を返した時用、pure function)
+ *
+ * 04 (間取り図) と 05 (建物外観) は IRREVERSIBLE_CATS に該当するため除外。
+ * 確信のない画像を強引に 04/05 に当てると名寄せスコアと bukaku supplement
+ * 発火条件の両方を壊すため。
+ *
+ * 優先順: (1) 5pt の安全カテゴリ → (2) 21 (その他) → (3) 04/05 以外の先頭
+ *
+ * @param {Array<{id: string, label: string, score: number}>} available
+ * @returns {string | null} カテゴリ ID、何も選べない時は null
+ */
+function pickFallbackCategory(available) {
+  const fallback5pt = available.find((c) => c.score === 5 && !IRREVERSIBLE_CATS.has(c.id));
+  const fallbackOther = available.find((c) => c.id === "21");
+  const safeFirst = available.find((c) => !IRREVERSIBLE_CATS.has(c.id));
+  return (fallback5pt || fallbackOther || safeFirst)?.id || null;
+}
+
 /**
  * 1枚の画像をGPT-4o-mini Visionで分類
  * @param {Buffer} imageBuffer - JPEG画像バッファ
@@ -57,7 +86,7 @@ async function classifySingleImage(imageBuffer, availableCategories) {
   const catList = availableCategories.map((c) => `${c.id}=${c.label}`).join(", ");
   const b64 = imageBuffer.toString("base64");
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: VISION_MODEL,
     max_tokens: 50,
     messages: [
@@ -74,13 +103,21 @@ async function classifySingleImage(imageBuffer, availableCategories) {
 
 カテゴリ: ${catList}
 
-判定基準（画像に実際に写っているもので判断）:
-- 間取り図・平面図・フロアプラン → 必ず04
-- 建物の外観写真（外から撮影、建物全体や一部が空・道路・植栽と共に写っている） → 05
+【絶対ルール — 04と05は誤判定すると物件の検索順位を壊す】
+- 04 (間取り図) は「線画・平面図・フロアプラン図のみ」。線で部屋の輪郭が描かれた図解であることが必須。写真は絶対に04にしない (シンク、浴槽、タイル壁、床の俯瞰など四角い形状の写真も04ではない)。
+- 05 (建物外観) は「建物を屋外から撮影した写真のみ」。空・道路・植栽と一緒に建物が写っていること。室内が一部でも映る画像は絶対に05にしない。
+
+【確信度ルール】
+- 04 / 05 は明確に確信が持てる場合のみ選ぶこと。少しでも怪しければ別カテゴリ、または 21 (その他) に倒す。
+- 04 / 05 を選ぶ前に「これは図面か?」「これは屋外から撮った建物か?」と自問してYESなら採用。
+
+【判定基準（画像に実際に写っているもので判断）】
+- 間取り図・平面図・フロアプラン (線画) → 04
+- 建物を屋外から撮影した写真 (建物 + 空 / 道路 / 植栽) → 05
 - リビング・ダイニング・居間（広い部屋、ソファ、テーブル） → 01
 - 洋室・和室・寝室・個室 → 06
-- キッチン（コンロ、シンク、調理台） → 02
-- バスルーム・浴室（浴槽、シャワー） → 03
+- キッチン（コンロ、シンク、調理台、流し台の俯瞰） → 02
+- バスルーム・浴室（浴槽、シャワー、浴槽の俯瞰） → 03
 - トイレ（便器） → 07
 - 洗面台・洗面所（洗面ボウル、鏡） → 08
 - 収納・クローゼット・押入れ → 09
@@ -89,6 +126,7 @@ async function classifySingleImage(imageBuffer, availableCategories) {
 - 玄関・靴箱・玄関ドア内側 → 12
 - オートロック・防犯カメラ・モニター付きインターホン → 13
 - エアコン・給湯リモコン・コンセント等の設備クローズアップ → 14
+- タイル壁・床のクローズアップ等 → 14 (その他設備) または 21 (その他)
 - 建物エントランス（自動ドア、集合ポスト、建物入口ホール） → 15
 - ロビー・共用ラウンジ・待合スペース → 16
 - 駐車場・駐輪場 → 17
@@ -98,11 +136,11 @@ async function classifySingleImage(imageBuffer, availableCategories) {
 - 上記いずれにも明確に該当しない → 21
 - QRコードの画像 → 「QR」とだけ回答
 
-重要ルール:
+【補足ルール】
 - 画像に実際に写っているものだけで判断。外部情報に頼らない。
-- 05(建物外観)は「建物を外から撮影した写真」のみ。室内が見える場合は室内カテゴリ。
 - 窓から外の景色が見えても、撮影位置が室内なら05ではない。景色が主題なら19(眺望)。
 - 部屋が主題で窓も見えるだけなら01または06。
+- 四角い枠 + 線で構成されていても、写真であれば04ではない。被写体 (シンク・浴槽・タイル等) のカテゴリを選ぶ。
 
 IDのみ回答（例: 01）。`,
           },
@@ -203,13 +241,16 @@ async function analyzeAndCropImages(downloaded, downloadDir, existingCategories 
       }
     }
 
-    // Final fallback: 5ptカテゴリ優先 → その他(21) → 先頭
+    // Final fallback: 04/05 (間取り図/建物外観) は不可逆カテゴリのため除外
+    // → 5pt 安全枠 → 21 (その他) → 04/05 以外の先頭、の順で fallback
+    // null になった場合はその画像を upload からスキップ
     if (!catId) {
-      const fallback5pt = available.find((c) => c.score === 5);
-      const fallbackOther = available.find((c) => c.id === "21");
-      const fallback = fallback5pt || fallbackOther || available[0];
-      catId = fallback?.id;
-      if (catId) console.log(`[image] #${img.index} → generic fallback: ${SUUMO_CATEGORIES.find(c => c.id === catId)?.label}`);
+      catId = pickFallbackCategory(available);
+      if (catId) {
+        console.log(`[image] #${img.index} → generic fallback: ${SUUMO_CATEGORIES.find(c => c.id === catId)?.label}`);
+      } else {
+        console.log(`[image] #${img.index} → fallback skipped (no safe category available)`);
+      }
     }
 
     // QRコード画像はスキップ
@@ -316,7 +357,7 @@ async function cropMissingCategories(processedImages, downloaded, downloadDir) {
       // Vision: この画像に対象エリアが部分的に写っているか判定 + 切り抜き座標取得
       try {
         const b64 = buffer.toString("base64");
-        const response = await openai.chat.completions.create({
+        const response = await getOpenAI().chat.completions.create({
           model: VISION_MODEL,
           max_tokens: 200,
           messages: [{
@@ -402,4 +443,4 @@ JSONのみ回答。`,
   return newImages;
 }
 
-module.exports = { analyzeAndCropImages, cropMissingCategories, SUUMO_CATEGORIES };
+module.exports = { analyzeAndCropImages, cropMissingCategories, SUUMO_CATEGORIES, pickFallbackCategory, IRREVERSIBLE_CATS };

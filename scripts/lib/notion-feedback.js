@@ -4,6 +4,10 @@
  * Phase 7.5 (2026-05-14): REG_FAIL / TIMEOUT / ERROR を Notion で「入稿失敗」に
  * フリップするとき、failure reason と category も同時に書き込めるよう設計。
  *
+ * Phase 2 (2026-05-15): IMAGE_INSUFFICIENT (Stage 02 早期 exit) も
+ * 失敗カテゴリ="データ不備" + 入稿失敗理由="REINS 画像 N 枚..." で同居させる
+ * (Notion Status 自体は "画像欠落" にフリップ、resolveNotionStatus 側で判定)。
+ *
  * 必要な Notion DB プロパティ (kento が手動で追加):
  *   - 入稿失敗理由  (Rich text)   失敗理由の生テキスト
  *   - 失敗カテゴリ  (Select)      "データ不備" / "forrent 検証失敗" / "想定外エラー" / "タイムアウト"
@@ -30,6 +34,7 @@ const CATEGORY = {
  *   REG_FAIL with reason (Stage 01 早期 reject) → データ不備
  *   REG_FAIL with errors[] (Stage 06 forrent server reject) → forrent 検証失敗
  *   NOT_FOUND (REINS 検索 0 件) → データ不備
+ *   IMAGE_INSUFFICIENT (Stage 02 早期 exit) → データ不備
  *   TIMEOUT → タイムアウト
  *   ERROR → 想定外エラー
  *   その他 (SUCCESS / FORRENT_LOGIN_FAIL) → null (Notion 書き込まない)
@@ -45,6 +50,8 @@ function categorizeError(result) {
         return CATEGORY.FORRENT;
       }
       // 元コードでは reinsData 欠落系も REG_FAIL (reason 付き) で返るのでデータ不備に倒す
+      return CATEGORY.DATA;
+    case "IMAGE_INSUFFICIENT":
       return CATEGORY.DATA;
     case "TIMEOUT":
       return CATEGORY.TIMEOUT;
@@ -78,6 +85,9 @@ function buildReasonText(result) {
     } else {
       text = result.reason || "(理由不明)";
     }
+  } else if (result.status === "IMAGE_INSUFFICIENT") {
+    const n = typeof result.rawCount === "number" ? result.rawCount : "?";
+    text = `REINS 画像 ${n} 枚 (閾値以下) — 元付業者の画像未登録、または REINS 側の登録漏れ。素材依頼が必要。`;
   } else if (result.status === "TIMEOUT") {
     text = result.error || "15 分以内に処理が完了しなかった";
   } else if (result.status === "ERROR") {

@@ -1,0 +1,8 @@
+{
+  "threshold": 34,
+  "slack": {
+    "channel": "C09B0527NSF",
+    "channelName": "ex_fango",
+    "messageTemplate": "🤖完全自動入稿完了\n物件名: {propertyName}\n貴社物件コード: {kishaCode}\n最終名寄せスコア: {score}"
+  }
+}

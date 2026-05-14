@@ -7,3 +7,6 @@ node_modules/
 logs/
 .playwright-data/
 .playwright-cli/
+
+# Throwaway measurement outputs (Phase 1 Vision A/B)
+scripts/legacy/measure-*-result.json

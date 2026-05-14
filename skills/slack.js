@@ -71,4 +71,38 @@ async function notifyError({ reinsId, propertyName, error }) {
   }
 }
 
-module.exports = { notifyNyukoSuccess, notifyError };
+/**
+ * 掲載指示 (escalation 路線) 成功時の通知。
+ * #ex_fango (or config.slack.channel) にフォーマット済テキストを投稿する。
+ * 失敗してもパイプライン全体は止めない (best-effort)。
+ *
+ * @param {object} args
+ * @param {string} args.channel - Slack channel ID (例: C09B0527NSF)
+ * @param {string} args.text    - 投稿本文 (score-escalation.formatSlackMessage の出力)
+ * @returns {Promise<{ok:boolean, ts?:string, skipped?:boolean, error?:string}>}
+ */
+async function notifyEscalationSuccess({ channel, text }) {
+  const client = getClient();
+  if (!client) {
+    console.error("[slack] SLACK_USER_TOKEN 未設定 — escalation 通知スキップ");
+    return { ok: false, skipped: true };
+  }
+  if (!channel) {
+    console.error("[slack] channel 未設定 — escalation 通知スキップ");
+    return { ok: false, skipped: true };
+  }
+  try {
+    const res = await client.chat.postMessage({
+      channel,
+      text,
+      unfurl_links: false,
+      unfurl_media: false,
+    });
+    return { ok: true, ts: res.ts };
+  } catch (e) {
+    console.error(`[slack] escalation 通知失敗: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+}
+
+module.exports = { notifyNyukoSuccess, notifyError, notifyEscalationSuccess };

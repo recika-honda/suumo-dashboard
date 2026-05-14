@@ -16,6 +16,7 @@ REINS-to-forrent.jp listing automation. Vanilla HTML front +薄い Node http サ
 - Dev / Prod: `node api-server.js` (default port 3500、`PORT=` で上書き可)。3456 は別プロジェクトに使われているので避ける (port-routing rule: runtime-board で衝突確認済)
 - 単発入稿 CLI: `node runNyuko.js <reinsId>` — api-server 経由でも内部的に spawn される
 - 3 endpoint: `POST /run` (spawn runNyuko 後 stdout から runId を抽出して返す) / `GET /status/:runId` (run.json をそのまま返す) / `GET /history` (nyuko-history.jsonl の末尾 50 件)
+- **REINS↔forrent フィールド対応表 SSOT**: `docs/forrent-field-mapping.html` (TOC + 21 セクション + 付録 + セルフチェックリスト)。スキル層 (`skills/forrent/*` / `skills/reins.js`) 変更時は同期させる
 - Skills layer in `skills/`: reins, forrent (facade), bukaku, google-images, google-maps, image-ai, text-ai, score-checker, suumo-check, transport-filler, slack, forrent-reader
   - **`skills/forrent.js` は Phase 7 (2026-05-14) で 67 LOC facade に縮減**。実装は `skills/forrent/` 配下 11 モジュール: constants / validate / form-helpers / session / fill-texts / fill-tokucho / fill-transport / fill-images / fill-shuhen / fill-form / register
   - public API (`require("../skills/forrent")` の export) は完全互換 → stage / api-server 側は無変更

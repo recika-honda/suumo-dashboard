@@ -27,7 +27,7 @@ const {
   selectRadioByIndex,
   waitForCascade,
 } = require("./form-helpers");
-const { norm } = require("./fill-texts");
+const { norm, sanitizeForLength } = require("./fill-texts");
 const { resolvePropertyTypeCode } = require("./validate");
 const { S, STRUCTURE_CODE, MADORI_TYPE_CODE } = require("./constants");
 
@@ -472,6 +472,41 @@ async function fillPropertyForm(mainFrame, reinsData, initialCostData = null) {
     filled["その他費用"] = true;
   } catch (e) {
     console.log(`[forrent] x その他費用: ${e.message.slice(0, 60)}`);
+  }
+
+  // ═══ 17.5. その他諸費用（退去時費用含む） ═══
+  // etcShohiyoFlg + etcShohiyoShosai
+  // forrent 構造 (2026-05-14 確認):
+  //   - 「ほか初期費用」(etcHiyo) = 入居時の入会金・鍵交換代等 → セクション 17 で処理
+  //   - 「その他諸費用」(etcShohiyo) = 退去時費用・更新料等 → こちら
+  // kento 指示: 「まずは『あり』にチェックを入れてから文言入力」「更新料もここに書くのがいい」
+  try {
+    await setCheckbox(mainFrame, "etcShohiyoFlg", true, "その他諸費用");
+    const koshinryo = norm(reinsData.更新料 || "");
+    const parts = [];
+    if (koshinryo && !/^(なし|ー|0)$/i.test(koshinryo)) {
+      parts.push(`更新料 ${koshinryo}`);
+    }
+    // 備考3 から退去時費用キーワードを含むセンテンスを抽出
+    const biko = norm(reinsData.備考3 || "");
+    if (biko) {
+      const sentences = biko.split(/[、。\n]+/).map(s => s.trim()).filter(Boolean);
+      const exitKeywords = ["退去時クリーニング", "退去時", "原状回復", "解約予告", "短期解約", "違約金"];
+      for (const s of sentences) {
+        if (exitKeywords.some(kw => s.includes(kw)) && !parts.some(p => p.includes(s))) {
+          parts.push(s);
+        }
+      }
+    }
+    if (parts.length === 0) {
+      parts.push("退去時クリーニング代・更新料等は別途ご案内します");
+    }
+    const shohiText = sanitizeForLength(parts.join("、"), 200);
+    await fillByName(mainFrame, `${S}etcShohiyoShosai}`, shohiText, "その他諸費用詳細");
+    console.log(`[forrent] + その他諸費用: ${shohiText.slice(0, 60)}${shohiText.length > 60 ? "..." : ""}`);
+    filled["その他諸費用"] = true;
+  } catch (e) {
+    console.log(`[forrent] x その他諸費用: ${e.message.slice(0, 60)}`);
   }
 
   // ═══ 18. 損保（火災保険） ═══

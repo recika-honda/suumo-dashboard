@@ -14,6 +14,11 @@
  */
 
 const forrent = require("../../skills/forrent");
+const slack = require("../../skills/slack");
+const {
+  getEscalationConfig,
+  formatSlackMessage,
+} = require("../../skills/score-escalation");
 const { writeStageInput, writeStageOutput } = require("../lib/artifact");
 
 const STAGE = "06-forrent-register";
@@ -24,18 +29,21 @@ const STAGE = "06-forrent-register";
  * @param {import("playwright").Frame} opts.mainFrame
  * @param {string} [opts.runDir]
  * @param {(name: string, extra?: object) => void} opts.logStep
+ * @param {string} [opts.reinsId]      - escalation 通知の貴社物件コード生成に使用
+ * @param {string} [opts.propertyName] - escalation 通知の物件名
  * @returns {Promise<{
  *   status: "SUCCESS" | "REG_FAIL",
  *   score: number | null,
  *   registrationType: string | null,
+ *   escalated: boolean,
  *   errors: Array<string>,
  * }>}
  */
-async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep }) {
-  writeStageInput(runDir, STAGE, { hasForrentPage: !!forrentPage, hasMainFrame: !!mainFrame });
+async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep, reinsId, propertyName }) {
+  writeStageInput(runDir, STAGE, { hasForrentPage: !!forrentPage, hasMainFrame: !!mainFrame, reinsId, propertyName });
   console.error("  [6/6] 登録...");
   logStep("register_start");
-  let regResult = { saved: false, registrationType: null };
+  let regResult = { saved: false, registrationType: null, escalated: false };
   let exceptionMessage = null;
   try {
     regResult = await forrent.registerProperty(forrentPage, mainFrame, {
@@ -44,7 +52,7 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep }) {
     if (regResult.saved) {
       const scoreText = regResult.score ? ` (${regResult.score}pt/43pt)` : "";
       console.error(`  -> ${regResult.registrationType}完了${scoreText}`);
-      logStep("register_success", { score: regResult.score });
+      logStep("register_success", { score: regResult.score, escalated: !!regResult.escalated });
     } else {
       const firstErr = (regResult.errors || [])[0] || regResult.error || "不明";
       console.error(`  -> 登録失敗: ${firstErr}`);
@@ -55,6 +63,7 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep }) {
         error: regResult.error || null,
         errors: regResult.errors || [],
         score: regResult.score || null,
+        escalated: !!regResult.escalated,
       });
     }
   } catch (e) {
@@ -63,10 +72,34 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep }) {
     logStep("register_exception", { error: exceptionMessage });
   }
 
+  // ── 掲載指示 (escalation) 成功時の Slack 通知 — best-effort ──
+  if (regResult.saved && regResult.escalated) {
+    try {
+      const cfg = getEscalationConfig();
+      const kishaCode = reinsId ? `fng${reinsId}` : "";
+      const text = formatSlackMessage(
+        { propertyName: propertyName || reinsId || "", kishaCode, score: regResult.score ?? "" },
+        cfg.slack
+      );
+      const sent = await slack.notifyEscalationSuccess({ channel: cfg.slack.channel, text });
+      if (sent.ok) {
+        console.error(`  [slack] 掲載指示通知 → #${cfg.slack.channelName} (ts: ${sent.ts})`);
+        logStep("slack_notify_escalated", { ok: true, ts: sent.ts });
+      } else {
+        console.error(`  [slack] 掲載指示通知スキップ/失敗: ${sent.error || "skipped"}`);
+        logStep("slack_notify_escalated", { ok: false, error: sent.error || "skipped" });
+      }
+    } catch (e) {
+      console.error(`  [slack] 掲載指示通知 例外: ${e.message}`);
+      logStep("slack_notify_escalated", { ok: false, error: e.message });
+    }
+  }
+
   const out = {
     status: regResult.saved ? "SUCCESS" : "REG_FAIL",
     score: regResult.score || null,
     registrationType: regResult.registrationType,
+    escalated: !!regResult.escalated,
     errors: regResult.errors || [],
     exceptionMessage,
   };

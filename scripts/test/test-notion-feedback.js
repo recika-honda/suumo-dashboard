@@ -56,6 +56,12 @@ check("categorizeError: SUCCESS → null (書き戻し不要)", () => {
 check("categorizeError: FORRENT_LOGIN_FAIL → null (transient)", () => {
   assert.strictEqual(categorizeError({ status: "FORRENT_LOGIN_FAIL" }), null);
 });
+check("categorizeError: IMAGE_INSUFFICIENT → データ不備", () => {
+  assert.strictEqual(
+    categorizeError({ status: "IMAGE_INSUFFICIENT", rawCount: 0 }),
+    CATEGORY.DATA
+  );
+});
 check("categorizeError: null/undefined → null", () => {
   assert.strictEqual(categorizeError(null), null);
   assert.strictEqual(categorizeError(undefined), null);
@@ -100,6 +106,16 @@ check("buildReasonText: 1500 char 上限で clamp", () => {
   const t = buildReasonText({ status: "ERROR", error: longErr });
   assert.ok(t.length <= 1500);
 });
+check("buildReasonText: IMAGE_INSUFFICIENT → rawCount を含む", () => {
+  const t = buildReasonText({ status: "IMAGE_INSUFFICIENT", rawCount: 2 });
+  assert.ok(t.includes("REINS"));
+  assert.ok(t.includes("2 枚"));
+  assert.ok(t.includes("素材依頼"));
+});
+check("buildReasonText: IMAGE_INSUFFICIENT rawCount 欠落 → '?' で埋める", () => {
+  const t = buildReasonText({ status: "IMAGE_INSUFFICIENT" });
+  assert.ok(t.includes("? 枚"));
+});
 
 // ── buildFeedbackProperties ───────────────────────────────
 check("buildFeedbackProperties: SUCCESS → {}", () => {
@@ -119,6 +135,12 @@ check("buildFeedbackProperties: NOT_FOUND → データ不備 + 固定 reason", 
   const p = buildFeedbackProperties({ status: "NOT_FOUND" });
   assert.strictEqual(p["失敗カテゴリ"].select.name, CATEGORY.DATA);
   assert.ok(p["入稿失敗理由"].rich_text[0].text.content.length > 0);
+});
+check("buildFeedbackProperties: IMAGE_INSUFFICIENT → データ不備 + rawCount 入り reason", () => {
+  const p = buildFeedbackProperties({ status: "IMAGE_INSUFFICIENT", rawCount: 0 });
+  assert.strictEqual(p["失敗カテゴリ"].select.name, CATEGORY.DATA);
+  const reason = p["入稿失敗理由"].rich_text[0].text.content;
+  assert.ok(reason.includes("0 枚"));
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -103,8 +103,9 @@ function createRunLog(reinsId) {
 }
 
 // ── Browser launch options ──────────────────────────────
-// デフォルト headless。NYUKO_HEADED=1 を立てれば画面表示（デバッグ用）。
-const HEADLESS = process.env.NYUKO_HEADED !== "1";
+// REINS は headless chromium を bot 検出するため必ず headed で起動 (project convention)。
+// NYUKO_HEADLESS=1 を明示的に立てた場合のみ headless (debug 用、本番非推奨)。
+const HEADLESS = process.env.NYUKO_HEADLESS === "1";
 const LAUNCH_OPTS = {
   headless: HEADLESS,
   args: [
@@ -216,6 +217,14 @@ async function processProperty(context, reinsPage, reinsId, index, total, runLog
   if (runLog) runLog.data.propertyName = r1.propertyName;
 
   const r2 = await runImagesDownload({ reinsPage, downloadDir, logStep, runDir });
+  if (r2.imageInsufficient) {
+    return {
+      reinsId,
+      status: "IMAGE_INSUFFICIENT",
+      propertyName: reinsData.建物名 || reinsId,
+      rawCount: r2.rawCount,
+    };
+  }
   const r3 = await runImagesClassify({
     context, reinsData, downloaded: r2.downloaded, downloadDir, logStep,
     launchOpts: LAUNCH_OPTS, runDir,
@@ -238,6 +247,8 @@ async function processProperty(context, reinsPage, reinsId, index, total, runLog
     const r6 = await runForrentRegister({
       forrentPage: r5.forrentPage, mainFrame: r5.mainFrame,
       runDir, logStep,
+      reinsId,
+      propertyName: reinsData.建物名 || reinsId,
     });
 
     return {
@@ -246,6 +257,7 @@ async function processProperty(context, reinsPage, reinsId, index, total, runLog
       status: r6.status,
       score: r6.score,
       registrationType: r6.registrationType,
+      escalated: !!r6.escalated,
       filledFields: Object.keys(r5.filled).length,
       uploadedImages: r5.uploaded.length,
       transport: r5.transport.filled.length,
@@ -358,7 +370,7 @@ async function main() {
     // resolveNotionStatus に集約 (scripts/pipeline-statuses.js)。
     // null は transient 失敗 (FORRENT_LOGIN_FAIL / TIMEOUT / ERROR) で
     // 「広告待ち」のまま次サイクルでリトライさせる。
-    const notionStatus = resolveNotionStatus(result.status);
+    const notionStatus = resolveNotionStatus(result);
     if (notionStatus) {
       try {
         // 「入稿失敗」のときは入稿失敗理由 + 失敗カテゴリも書き戻す (Phase 7.5)

@@ -55,7 +55,7 @@ const STAGES = [
 ];
 
 const LAUNCH_OPTS = {
-  headless: process.env.NYUKO_HEADED !== "1",
+  headless: process.env.NYUKO_HEADLESS === "1",
   args: [
     "--disable-blink-features=AutomationControlled",
     "--disable-features=IsolateOrigins,site-per-process",
@@ -213,6 +213,8 @@ async function main() {
         mainFrame: r5.mainFrame,
         runDir,
         logStep,
+        reinsId: r1.reinsId || r1.reinsData?.物件番号,
+        propertyName: r1.reinsData?.建物名,
       });
       console.log(JSON.stringify({ resumed: true, r5: { status: r5.status }, r6 }));
     } finally {

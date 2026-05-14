@@ -295,20 +295,26 @@
 </table>
 
 <!-- ============================================ -->
-<h2 id="sec4"><span class="num">04</span>お金 (賃料・管理費・敷礼)</h2>
+<h2 id="sec4"><span class="num">04</span>お金・駐車場等</h2>
 
-<h3>賃料</h3>
+<blockquote class="info">
+forrent.jp 実フォームの「お金・駐車場等」セクション構成 (16 項目、2026-05-14 大木さん確認):<br>
+<strong>月額賃料 / 管理費 / 礼金 / 敷金 / 敷金積増 / 償却金 / 敷引 / 保証金 / ほか初期費用 (入会金等) / その他諸費用 (退去時費用含む) / 仲介手数料 / 損保 / 契約期間 / 保証会社 / 駐車場 / 特優賃</strong><br>
+<strong>共益費という枠は forrent に無い</strong>。REINS の「共益費」と「管理費」はどちらも forrent の「管理費」枠に集約される。
+</blockquote>
+
+<h3>月額賃料</h3>
 <table>
   <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
   <tbody>
     <tr>
-      <td class="field">賃料 (万)</td>
+      <td class="field">月額賃料 (万)</td>
       <td class="dom">name="${S}chinryo1}"</td>
       <td class="src">賃料</td>
       <td class="rule">"7.0万円" → 7。"10.5万円" → 10。<code>Math.floor(parseFloat(...))</code></td>
     </tr>
     <tr>
-      <td class="field">賃料 (千)</td>
+      <td class="field">月額賃料 (千)</td>
       <td class="dom">name="${S}chinryo2}"</td>
       <td class="src">賃料</td>
       <td class="rule">"7.0万円" → 0。"10.5万円" → 5。<code>Math.round((man - floor) * 10)</code></td>
@@ -316,21 +322,21 @@
   </tbody>
 </table>
 
-<h3>管理費 / 共益費</h3>
-<p>REINS 側は <code>共益費</code> / <code>管理費</code> どちらかに金額があれば優先採用。両方なしなら <code>kanrihiFlg</code> を OFF (=「なし」扱い)。</p>
+<h3>管理費 <span style="font-size:13px;color:var(--muted);font-weight:normal;">(forrent には共益費枠なし、管理費に集約)</span></h3>
+<p>REINS 側は <code>共益費</code> / <code>管理費</code> どちらかに金額があれば優先採用 → forrent の「管理費」枠に投入。両方なしなら <code>kanrihiFlg</code> を OFF (=「なし」扱い)。<strong>"10,000円" → kanrihi1="1" / kanrihi2="0"</strong> (1 万 + 0 円)。</p>
 <table>
   <thead><tr><th style="width:14%">label</th><th style="width:22%">DOM</th><th style="width:18%">REINS</th><th>変換ロジック</th></tr></thead>
   <tbody>
     <tr>
       <td class="field">管理費 (万)</td>
       <td class="dom">name="${S}kanrihi1}"</td>
-      <td class="src">共益費 / 管理費</td>
+      <td class="src">共益費 OR 管理費</td>
       <td class="rule"><code>/([\d,]+)円/</code> 抽出 → 円 → 万 + 円残。万 &gt; 0 のみ入力。</td>
     </tr>
     <tr>
       <td class="field">管理費 (円)</td>
       <td class="dom">name="${S}kanrihi2}"</td>
-      <td class="src">共益費 / 管理費</td>
+      <td class="src">共益費 OR 管理費</td>
       <td class="rule">円残部 (<code>yen % 10000</code>) を投入。</td>
     </tr>
     <tr>
@@ -341,6 +347,9 @@
     </tr>
   </tbody>
 </table>
+<blockquote class="warn">
+<strong>注意:</strong> REINS の「うち管理費消費税」「管理組合有無」は forrent に対応 input なし。管理費は税込で扱う想定。
+</blockquote>
 
 <h3>敷金 / 礼金 / 保証金 / 償却金 (<code>fillDeposit</code> 共通ロジック)</h3>
 
@@ -424,21 +433,15 @@
   </tbody>
 </table>
 
-<h3>forrent に存在するが現状未対応 / 別経路で扱うフィールド</h3>
+<h3>forrent に存在するが現状未対応のフィールド</h3>
 
 <blockquote class="warn">
-<strong>未マッピングの forrent 入力フィールド一覧。</strong>現状は空入稿 (= forrent サーバ default 値) になる。物件によっては記入推奨だが、優先度・運用次第で対応する。
+更新料 / その他諸費用 / 退去時費用 / フリーレント条件 は <strong>セクション 12 (B) その他諸費用</strong> で吸収するようになった (2026-05-14)。残りの未対応一覧:
 </blockquote>
 
 <table>
   <thead><tr><th style="width:18%">forrent label</th><th style="width:24%">DOM</th><th style="width:22%">REINS 該当項目</th><th>備考</th></tr></thead>
   <tbody>
-    <tr>
-      <td class="field">権利金</td>
-      <td class="dom">(forrent に input 見つからず)</td>
-      <td class="src">権利金</td>
-      <td>forrent 新規登録フォームに権利金 input は見つからない (取材データで confirm)。記入する場合は備考に書く運用。</td>
-    </tr>
     <tr>
       <td class="field">敷金積増</td>
       <td class="dom">${S}tsumimashiFlg} / tsumimashi1 / tsumimashi2 / tsumimashiKbnCd / tsumimashiJokenKbnCd</td>
@@ -455,19 +458,31 @@
       <td class="field">駐車場料金</td>
       <td class="dom">${S}chushajoRyokin1} / chushajoRyokin2</td>
       <td class="src">(将来課題)</td>
-      <td>駐車場別途料金。REINS に「駐車場料金」フィールドがあれば反映可能。現状は備考に書かれる。</td>
+      <td>駐車場別途料金。REINS から取得できれば反映可能。現状は備考に書かれる。</td>
     </tr>
     <tr>
-      <td class="field">その他諸費用</td>
-      <td class="dom">${S}etcShohiyoFlg} / etcShohiyoShosai</td>
-      <td class="src">—</td>
-      <td>etcHiyo (初期費用) とは別枠の月額諸費用。現状未対応。</td>
+      <td class="field">駐車場詳細</td>
+      <td class="dom">${S}chushajoFlg} / chushajoBikoKbnCd / kinrinChushajoKyori</td>
+      <td class="src">駐車場 / 駐車場在否</td>
+      <td>セクション 13 で駐車場状況区分のみ実装。料金・近隣距離は未対応。</td>
     </tr>
     <tr>
-      <td class="field">フリーレント条件詳細</td>
-      <td class="dom">${S}freeRentJokenShosai}</td>
-      <td class="src">条件フリー / 備考3</td>
-      <td>「フリーレント1ヶ月」等の条件詳細。現状は備考 (特記事項) に流れる。</td>
+      <td class="field">保証会社</td>
+      <td class="dom">${S}hoshoninDaikoFlg}</td>
+      <td class="src">(保証人代行で対応中)</td>
+      <td>セクション 11「保証人代行」(hoshoninDaikoKbnCd) を「必加入」設定済。<code>hoshoninDaikoFlg</code> 単独 ON は未確認。</td>
+    </tr>
+    <tr>
+      <td class="field">特優賃 (特定優良賃貸住宅)</td>
+      <td class="dom">${S}tokuyuchinFlg} / tokuyuchinHendoKbnCd / tokuyuchinHojoNensu / tokuyuchinHosoku / tokuyuchinNyukyoFutanFrom1-2 / tokuyuchinNyukyoFutanTo1-2 / tokuyuchinUpRitsu1-2</td>
+      <td class="src">(該当物件は稀)</td>
+      <td>特定優良賃貸住宅 (= 中堅所得者向け公的賃貸) の補助条件・家賃変動率等を入力する枠。FANGO 取扱物件にはほぼ無いはずなので当面 OFF。</td>
+    </tr>
+    <tr>
+      <td class="field">権利金</td>
+      <td class="dom">(forrent に input 見つからず)</td>
+      <td class="src">権利金</td>
+      <td>forrent 新規登録フォームに権利金 input は見つからない。記入する場合は備考に書く運用。</td>
     </tr>
     <tr>
       <td class="field">定期借家「月」数</td>
@@ -476,40 +491,22 @@
       <td>既存実装は <code>teikiShakuyaNen</code> (年) のみ。「2年6ヶ月」等の半端期間は現状切り捨て。</td>
     </tr>
     <tr>
-      <td class="field">更新料</td>
-      <td class="dom">(forrent に input 見つからず)</td>
-      <td class="src">更新料</td>
-      <td>REINS では抽出される (<code>reinsData.更新料</code>) が forrent 入力フォームに該当 input なし。備考 (biko) 経由で特記事項に流れる。</td>
-    </tr>
-    <tr>
-      <td class="field">その他月額費</td>
-      <td class="dom">(forrent に input 見つからず)</td>
-      <td class="src">その他月額費名称 / 金額</td>
-      <td>forrent には汎用「その他月額費」input なし。駐車場料金 (chushajoRyokin) など特定用途のみ。</td>
-    </tr>
-    <tr>
       <td class="field">うち管理費消費税</td>
       <td class="dom">(forrent に input なし)</td>
       <td class="src">うち管理費消費税</td>
       <td>forrent は管理費を税込で扱う想定。内訳の消費税は反映しない。</td>
     </tr>
     <tr>
-      <td class="field">管理組合有無</td>
+      <td class="field">管理組合有無 / 更新区分 / 新賃料</td>
       <td class="dom">(forrent 該当なし)</td>
-      <td class="src">管理組合有無</td>
-      <td>forrent 入稿時は不要 (賃貸物件の入稿項目ではない)。</td>
-    </tr>
-    <tr>
-      <td class="field">更新区分 / 新賃料</td>
-      <td class="dom">(forrent 該当なし)</td>
-      <td class="src">更新区分 / 新賃料</td>
-      <td>REINS 側で更新時の家賃変動を表す情報。forrent 入稿には不要。</td>
+      <td class="src">管理組合有無 / 更新区分 / 新賃料</td>
+      <td>forrent 入稿には不要 (賃貸物件入稿項目ではない)。</td>
     </tr>
     <tr>
       <td class="field">その他一時金名称1/2 / 金額1/2</td>
-      <td class="dom">etcHiyoShosai (テキスト) 経由</td>
+      <td class="dom">(現状 reins.js extractor で未抽出)</td>
       <td class="src">その他一時金名称1/2 / 金額1/2</td>
-      <td>「更新事務手数料」等の特殊項目。<strong>現状の reins.js extractor では未抽出</strong> (LABELS にも入っていない)。biko 経由で特記事項に流れる可能性はあるが、金額情報は失われる。</td>
+      <td>「更新事務手数料」等の特殊項目。<strong>reins.js LABELS に入っていない</strong>。biko 経由で特記事項に流れる可能性はあるが、金額情報は失われる。</td>
     </tr>
   </tbody>
 </table>
@@ -747,9 +744,16 @@
 </table>
 
 <!-- ============================================ -->
-<h2 id="sec12"><span class="num">12</span>その他費用 + 損保 (火災保険)</h2>
+<h2 id="sec12"><span class="num">12</span>ほか初期費用 / その他諸費用 / 損保</h2>
 
-<h3>その他費用 (鍵交換代・消毒・クリーニング 等)</h3>
+<blockquote class="info">
+forrent の費用枠は <strong>2 つに分離</strong>:<br>
+(A) <strong>ほか初期費用 (入会金等)</strong> = <code>etcHiyo*</code> — 入居時に一度発生する費用 (鍵交換代・消毒・クリーニング・サポート代・事務手数料)<br>
+(B) <strong>その他諸費用 (退去時費用含む)</strong> = <code>etcShohiyo*</code> — 更新料・退去時クリーニング・原状回復費等の長期発生分<br>
+両方とも「あり」にチェック → 詳細テキスト入力の流れ。
+</blockquote>
+
+<h3>(A) ほか初期費用 (入会金等) — etcHiyo*</h3>
 <table>
   <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th>変換ロジック</th></tr></thead>
   <tbody>
@@ -805,7 +809,32 @@
   </tbody>
 </table>
 
-<h3>損保 (火災保険)</h3>
+<h3>(B) その他諸費用 (退去時費用含む) — etcShohiyo*</h3>
+<table>
+  <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th>変換ロジック</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">その他諸費用フラグ</td>
+      <td class="dom">id="etcShohiyoFlg" checkbox</td>
+      <td><span class="pill fixed">常に ON</span></td>
+    </tr>
+    <tr>
+      <td class="field">その他諸費用 詳細</td>
+      <td class="dom">name="${S}etcShohiyoShosai}"<br>max=200 (sanitize)</td>
+      <td>
+        文言構築:
+        <ol style="margin:4px 0 4px 18px;">
+          <li>REINS 更新料が空でない (≠ "なし" / "ー" / "0") → "更新料 {value}" を含める (例: "更新料 1ヶ月")</li>
+          <li>備考3 を文ごとに split し、以下のキーワードを含むセンテンスを抽出: 退去時クリーニング / 退去時 / 原状回復 / 解約予告 / 短期解約 / 違約金</li>
+          <li>上記いずれも該当なし → デフォルト文 "退去時クリーニング代・更新料等は別途ご案内します"</li>
+        </ol>
+        最後に <code>sanitizeForLength(parts.join("、"), 200)</code>。
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>(C) 損保 (火災保険) — sonpoFlg</h3>
 <table>
   <thead><tr><th style="width:18%">label</th><th style="width:24%">DOM</th><th>変換ロジック</th></tr></thead>
   <tbody>

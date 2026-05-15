@@ -85,24 +85,30 @@ function sanitizeForLength(text, maxLen) {
  * (catchCopy / freeComment / netCatch / netFreeMemo / etcHiyoShosai 等)。
  *
  * 処理:
- *   1. NFKD normalize → "Grandé" (1 char é) を "Grande" + combining acute (2 chars) に分解
- *   2. combining marks (U+0300-U+036F) を strip → diacritic 除去 ("é" → "e")
- *   3. toFullWidth → ASCII 半角文字を全部全角に
- *   4. 改行 (LF/CRLF) を全角スペースに置換
- *   5. slice(0, maxLen)
+ *   1. NFKD normalize → "Grandé" (1 char é) を "Grande" + combining acute に分解、
+ *      "ヴ" (1 char) も "ウ" + U+3099 (濁点 combining mark) に分解される
+ *   2. **Latin diacritics のみ** strip (U+0300-U+036F) → "é" → "e"。日本語の濁点・
+ *      半濁点 (U+3099, U+309A) は残す。
+ *   3. NFC で recompose → 「ウ」+ U+3099 を「ヴ」に戻す (日本語破壊を避ける)。
+ *      Latin combining marks は既に strip 済みなので "Grande" のまま。
+ *   4. toFullWidth → ASCII 半角文字を全部全角に
+ *   5. 改行 (LF/CRLF) を全角スペースに置換
+ *   6. slice(0, maxLen)
  *
- * Why NFKD+strip diacritics: text-ai が "Grandé Nakaochai" のような diacritic 付き
+ * Why NFKD+strip diacritics+NFC: text-ai が "Grandé Nakaochai" のような diacritic 付き
  * Latin 文字を生成すると、ブラウザ送信時に "é" が HTML entity "&#233;" (8 chars) に
- * 展開されてサーバ側でカウントが膨らみ、ローカル slice(0, 100) しても "100文字以内"
- * バリデーションで弾かれる anti-pattern が発生する (再現: 100139121297)。
- * NFKD で分解 → combining marks を消す → 純 ASCII 化 → toFullWidth で禁止文字解消。
+ * 展開されてサーバ側でカウントが膨らみ、ローカル slice しても "N文字以内"
+ * バリデーションで弾かれる anti-pattern が発生する。同様に NFKD 後 NFC せずに送信すると
+ * 「ヴ」が「ウ」+「&#12441;」に展開され (1 char → 9 chars) overflow + 禁止文字エラー。
+ * (再現: 100139121297 Grandé / 100139127191 Phase 3a smoke "ヴィヴェール")
  */
 function sanitizeForForrentText(text, maxLen) {
   if (!maxLen || maxLen <= 0) return "";
   if (typeof text !== "string") return "";
   const normalized = text
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "");
+    .replace(/[̀-ͯ]/g, "")
+    .normalize("NFC");
   return toFullWidth(normalized).replace(/[\r\n]+/g, "　").slice(0, maxLen);
 }
 

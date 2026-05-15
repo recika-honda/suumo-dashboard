@@ -42,10 +42,35 @@ check("real case: 121297 freeComment 151chars w/ Grandé → 100 chars all full-
   assert.strictEqual(out.length, 100, `expected 100 chars, got ${out.length}`);
   // No half-width ASCII left
   assert.ok(!/[\x21-\x7E]/.test(out), `half-width ASCII remains: ${out}`);
-  // No combining marks
-  assert.ok(!/[̀-ͯ]/.test(out), `combining marks remain: ${out}`);
+  // No Latin combining marks
+  assert.ok(!/[̀-ͯ]/.test(out), `Latin combining marks remain: ${out}`);
+  // No Japanese combining marks (U+3099 dakuten / U+309A handakuten)
+  assert.ok(!out.includes("゙") && !out.includes("゚"), `Japanese combining marks remain: ${out}`);
   // No precomposed "é"
   assert.ok(!out.includes("é"), `precomposed é remains: ${out}`);
+});
+
+check("real case: 127191 freeComment w/ ヴィヴェール → ヴ 保持 (NFC recompose)", () => {
+  // 127191 で発生: NFKD で ヴ → ウ+U+3099 (濁点) に分解、Latin diacritics 用の strip
+  // は通らず、HTML entity "&#12441;" に展開されてサーバ側で 100 → 155 char overflow
+  // + 禁止文字エラー。NFC recompose 修正で ヴ 保持。
+  const input = "東京都世田谷区北沢の『ヴィヴェール笹塚』は、京王線の笹塚駅から徒歩6分の好立地です。面積46.58㎡の1室LDKは、2012年築で快適な居住空間を提供します。";
+  const out = sanitizeForForrentText(input, 100);
+  // 100 char cap 以内、かつ全文収まる範囲では length 微変動を許容 (㎡ → m² NFKD で +1)
+  assert.ok(out.length <= 100, `expected ≤ 100, got ${out.length}`);
+  // ヴ が precomposed のまま保持されている
+  assert.ok(out.includes("ヴ"), `ヴ should be preserved (got: ${out})`);
+  // 濁点 U+3099 が単独で残っていない
+  assert.ok(!out.includes("゙"), `combining dakuten U+3099 remains: ${out}`);
+  // 半濁点 U+309A も残っていない
+  assert.ok(!out.includes("゚"), `combining handakuten U+309A remains: ${out}`);
+});
+
+check("濁点付き hiragana (が・ば・ぱ等) も保持される", () => {
+  // ば = U+3070 (precomposed) → NFKD → は + U+3099 → strip Latin only → NFC → ば
+  const out = sanitizeForForrentText("ばがぱ", 100);
+  assert.strictEqual(out, "ばがぱ");
+  assert.ok(!out.includes("゙") && !out.includes("゚"));
 });
 
 // ── Diacritics ────────────────────────────────────────────

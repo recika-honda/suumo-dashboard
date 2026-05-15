@@ -33,7 +33,7 @@
 
 const { validateBySpec, checkRequiredFromReinsData } = require("./forrent/validate");
 const { login, navigateToNewProperty } = require("./forrent/session");
-const { sanitizeForLength, fillTexts } = require("./forrent/fill-texts");
+const { sanitizeForLength, toFullWidth, sanitizeForForrentText, fillTexts } = require("./forrent/fill-texts");
 const { fillTokucho } = require("./forrent/fill-tokucho");
 const {
   fillTransportViaMap,
@@ -64,4 +64,6 @@ module.exports = {
   checkRequiredFromReinsData,
   validateBySpec,
   sanitizeForLength,
+  toFullWidth,
+  sanitizeForForrentText,
 };

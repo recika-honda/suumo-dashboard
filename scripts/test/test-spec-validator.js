@@ -77,8 +77,20 @@ const tests = [
     expectOk: true,
   },
   {
+    name: "マンション 地上階層 missing → REG_FAIL (再現: 100139121763)",
+    data: { 建物名: "テスト", 物件種目: "マンション", 部屋番号: "101", 使用部分面積: "30.5㎡" },
+    expectOk: false,
+    expectField: "地上階層",
+    expectReason: "REINSデータに階建（地上階層）がありません",
+  },
+  {
+    name: "戸建 地上階層 missing → OK (appliesTo フィルタ)",
+    data: { 建物名: "テスト", 物件種目: "一戸建て" },
+    expectOk: true,
+  },
+  {
     name: "全 field 揃う → OK",
-    data: { 建物名: "テストマンション", 物件種目: "マンション", 部屋番号: "101", 使用部分面積: "30.5㎡" },
+    data: { 建物名: "テストマンション", 物件種目: "マンション", 部屋番号: "101", 使用部分面積: "30.5㎡", 地上階層: "地上3階" },
     expectOk: true,
   },
 ];

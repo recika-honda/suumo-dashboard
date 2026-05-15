@@ -80,14 +80,42 @@ function sanitizeForLength(text, maxLen) {
   return text.replace(/[\r\n]+/g, "　").slice(0, maxLen);
 }
 
+/**
+ * forrent.jp の「半角カナ・半角英数字・半角記号禁止」かつ「N 文字以内」の text フィールド向け
+ * (catchCopy / freeComment / netCatch / netFreeMemo / etcHiyoShosai 等)。
+ *
+ * 処理:
+ *   1. NFKD normalize → "Grandé" (1 char é) を "Grande" + combining acute (2 chars) に分解
+ *   2. combining marks (U+0300-U+036F) を strip → diacritic 除去 ("é" → "e")
+ *   3. toFullWidth → ASCII 半角文字を全部全角に
+ *   4. 改行 (LF/CRLF) を全角スペースに置換
+ *   5. slice(0, maxLen)
+ *
+ * Why NFKD+strip diacritics: text-ai が "Grandé Nakaochai" のような diacritic 付き
+ * Latin 文字を生成すると、ブラウザ送信時に "é" が HTML entity "&#233;" (8 chars) に
+ * 展開されてサーバ側でカウントが膨らみ、ローカル slice(0, 100) しても "100文字以内"
+ * バリデーションで弾かれる anti-pattern が発生する (再現: 100139121297)。
+ * NFKD で分解 → combining marks を消す → 純 ASCII 化 → toFullWidth で禁止文字解消。
+ */
+function sanitizeForForrentText(text, maxLen) {
+  if (!maxLen || maxLen <= 0) return "";
+  if (typeof text !== "string") return "";
+  const normalized = text
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "");
+  return toFullWidth(normalized).replace(/[\r\n]+/g, "　").slice(0, maxLen);
+}
+
 async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCostData = null) {
   const errors = [];
 
   // テキストを制限内にtruncate（フリーコメント=100文字、キャッチ=30文字）
-  // sanitizeForLength は改行 (LF/CRLF) を全角スペースに置換してから slice するので、
-  // AI が改行を含む文字列を返しても CRLF +1 char anti-pattern で REG_FAIL しない。
-  const truncCatch = sanitizeForLength(catchCopy, 30);
-  const truncComment = sanitizeForLength(freeComment, 100);
+  // sanitizeForForrentText は CRLF anti-pattern に加えて、NFKD + strip diacritics +
+  // toFullWidth を適用して forrent 「禁止文字 (半角カナ・半角英数字・半角記号)」と
+  // 「é → &#233; HTML entity 展開で N+5 char overflow」の両方を予防する。
+  // (再現: 100139121297 "フリーコメントには、100文字以内で入力してください" + 禁止文字 — 「Grandé」原因)
+  const truncCatch = sanitizeForForrentText(catchCopy, 30);
+  const truncComment = sanitizeForForrentText(freeComment, 100);
 
   // REINS備考情報から特記事項テキストを構築（全備考+フリースペース+一時金を結合して漏れ防止）
   // forrent.jpの備考欄は半角カナ・半角英数字・記号が禁止 → 全角変換
@@ -133,7 +161,11 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCo
     const costParts = sentences.filter(s => costKeywords.some(k => s.includes(k)));
     if (costParts.length > 0) etcTextRaw = costParts.join("、");
   }
-  const etcHiyoText = sanitizeForLength(etcTextRaw, 200);
+  // 「ほか初期費用詳細」は forrent 側で半角カナ・半角数字・半角記号を禁止文字として
+  // バリデーション弾きする。costItems から構築するルートは toLocaleString() が
+  // "70,840" のように半角数字+半角カンマを返すので toFullWidth で必ず正規化する。
+  // (再現: 100139127191 / 100139119717 で REG_FAIL "ほか初期費用詳細に禁止文字..." )
+  const etcHiyoText = sanitizeForLength(toFullWidth(etcTextRaw), 200);
 
   // evaluate() で直接 DOM 操作（フレーム状態に左右されにくい）
   try {
@@ -196,6 +228,7 @@ async function fillTexts(mainFrame, catchCopy, freeComment, reinsData, initialCo
 module.exports = {
   norm,
   toFullWidth,
+  sanitizeForForrentText,
   sanitizeForLength,
   fillTexts,
 };

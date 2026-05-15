@@ -21,6 +21,13 @@
       "appliesTo": { "物件種目": ["マンション", "アパート"] },
       "rejectReason": "REINSデータに面積（使用部分面積）がありません",
       "$comment": "forrent サーバ側で「面積を入力して下さい」エラー。REINS detail の '使用部分面積' が空 (元付業者の入力漏れ、例: 100139100018) で踏むパターンを Stage 01 で弾く。再現: 2026-05-12 の smoke test で 3 分浪費"
+    },
+    {
+      "key": "地上階層",
+      "label": "階建",
+      "appliesTo": { "物件種目": ["マンション", "アパート"] },
+      "rejectReason": "REINSデータに階建（地上階層）がありません",
+      "$comment": "forrent サーバ側「階建を入力して下さい」を Stage 01 で弾く。REINS 抽出 regex (skills/reins.js: 地上階層\\s*\\n\\s*(\\d+)階) が元付業者の入力漏れに当たるとマッチせず key 自体が欠落。再現: 100139121763 (2026-05-14 バッチ REG_FAIL)。Forrent UI は『地上階建』表示で id=kai に対応"
     }
   ]
 }

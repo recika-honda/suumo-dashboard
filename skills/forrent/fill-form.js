@@ -27,7 +27,7 @@ const {
   selectRadioByIndex,
   waitForCascade,
 } = require("./form-helpers");
-const { norm, sanitizeForLength } = require("./fill-texts");
+const { norm, sanitizeForLength, toFullWidth } = require("./fill-texts");
 const { resolvePropertyTypeCode } = require("./validate");
 const { S, STRUCTURE_CODE, MADORI_TYPE_CODE } = require("./constants");
 
@@ -501,7 +501,9 @@ async function fillPropertyForm(mainFrame, reinsData, initialCostData = null) {
     if (parts.length === 0) {
       parts.push("退去時クリーニング代・更新料等は別途ご案内します");
     }
-    const shohiText = sanitizeForLength(parts.join("、"), 200);
+    // 「その他諸費用詳細」も forrent 禁止文字 (半角カナ・半角数字・半角記号) 対象。
+    // 更新料 (REINS 生データ) や biko に半角が混ざるので toFullWidth で正規化。
+    const shohiText = sanitizeForLength(toFullWidth(parts.join("、")), 200);
     await fillByName(mainFrame, `${S}etcShohiyoShosai}`, shohiText, "その他諸費用詳細");
     console.log(`[forrent] + その他諸費用: ${shohiText.slice(0, 60)}${shohiText.length > 60 ? "..." : ""}`);
     filled["その他諸費用"] = true;

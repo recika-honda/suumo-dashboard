@@ -18,6 +18,17 @@ const { norm } = require("./fill-texts");
 //  特徴項目チェックボックス
 // ══════════════════════════════════════════════════════════
 
+// 物件種別を問わず常にチェックする FANGO デフォルト特徴項目。
+// REINS データ・キーワード推定とは独立に投入される。
+const DEFAULT_TOKUCHO_CODES = [
+  "0527", // 敷地内ごみ置き場
+  "1436", // 都市ガス
+  "2201", // クロゼット
+  "2207", // シューズボックス
+  "2724", // 保証人不要
+  "2737", // IT重説 対応物件
+];
+
 // REINS設備フリーテキスト → forrent.jp categoryTokuchoCd value マッピング
 const SETSUBI_TO_TOKUCHO = {
   // ── 交通・立地 ──
@@ -382,12 +393,15 @@ async function fillTokucho(mainFrame, reinsData) {
   const inferred = inferTokuchoFromBuilding(reinsData);
   for (const c of inferred) codesToCheck.add(c);
 
+  // 3. FANGO デフォルト (REINS データに依らず常時投入)
+  for (const c of DEFAULT_TOKUCHO_CODES) codesToCheck.add(c);
+
   if (codesToCheck.size === 0) {
     console.log("[forrent] tokucho: no matching features found");
     return { checked: 0, codes: [] };
   }
 
-  // 3. チェックボックスを設定
+  // 4. チェックボックスを設定
   const codesArray = [...codesToCheck];
   const result = await mainFrame.evaluate((codes) => {
     let checked = 0;
@@ -420,6 +434,7 @@ async function fillTokucho(mainFrame, reinsData) {
 
 module.exports = {
   SETSUBI_TO_TOKUCHO,
+  DEFAULT_TOKUCHO_CODES,
   inferTokuchoFromBuilding,
   fillTokucho,
 };

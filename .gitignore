@@ -10,3 +10,7 @@ logs/
 
 # Throwaway measurement outputs (Phase 1 Vision A/B)
 scripts/legacy/measure-*-result.json
+
+# npm lockfile — this project uses bun (bun.lock is the source of truth).
+# npm install on a different machine creates spurious diffs.
+package-lock.json

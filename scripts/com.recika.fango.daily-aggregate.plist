@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.recika.fango.daily-aggregate — Phase ε/ζ daily aggregate (Step 5)
+
+  目的: 前日の logs/runs/ artifacts を scan して 6 軸メトリクスを daily report に集約。
+  実行時間: 毎日 09:00 JST (前日 00:00-23:59 分を 09:00 にまとめる)
+
+  ===================================================================
+  IMPORTANT: This plist ships in *disabled* state.
+  Phase ζ 開始合意までは kento が手動で enable しない。
+  有効化手順は README-daily-aggregate.md を参照 (try/finally + launchctl list verify pattern 必須)。
+  ===================================================================
+
+  既存 launchd routine (jp.fango.watch-nyuko) とは独立。watch-nyuko と並走しても
+  日次の logs/runs/ scan のみで競合しない (REINS / forrent への接続なし)。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.recika.fango.daily-aggregate</string>
+
+  <!-- ship 時は disabled。手動 launchctl load 前に Disabled キーを削除する -->
+  <key>Disabled</key>
+  <true/>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>cd /Volumes/AgentSSD/04_FANGO/FNG26_AI入稿システム/code/suumo-dashboard &amp;&amp; /usr/local/bin/node scripts/daily-aggregate-phase-delta.js --date=$(date -v -1d +%Y-%m-%d)</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Volumes/AgentSSD/04_FANGO/FNG26_AI入稿システム/code/suumo-dashboard</string>
+
+  <!-- 毎日 09:00 JST に前日分を集約 -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Volumes/AgentSSD/04_FANGO/FNG26_AI入稿システム/code/suumo-dashboard/logs/daily-aggregate.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Volumes/AgentSSD/04_FANGO/FNG26_AI入稿システム/code/suumo-dashboard/logs/daily-aggregate.launchd.err</string>
+
+  <!-- load 時に即実行しない (Phase ζ 監視は予定時刻のみ) -->
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

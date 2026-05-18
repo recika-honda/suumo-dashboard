@@ -18,6 +18,7 @@ const slack = require("../../skills/slack");
 const {
   getEscalationConfig,
   formatSlackMessage,
+  formatCapacityFallbackMessage,
 } = require("../../skills/score-escalation");
 const { writeStageInput, writeStageOutput } = require("../lib/artifact");
 
@@ -36,6 +37,8 @@ const STAGE = "06-forrent-register";
  *   score: number | null,
  *   registrationType: string | null,
  *   escalated: boolean,
+ *   escalationAttempted: boolean,
+ *   capacityExceeded: boolean,
  *   errors: Array<string>,
  * }>}
  */
@@ -52,7 +55,12 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep, rei
     if (regResult.saved) {
       const scoreText = regResult.score ? ` (${regResult.score}pt/43pt)` : "";
       console.error(`  -> ${regResult.registrationType}完了${scoreText}`);
-      logStep("register_success", { score: regResult.score, escalated: !!regResult.escalated });
+      logStep("register_success", {
+        score: regResult.score,
+        escalated: !!regResult.escalated,
+        escalationAttempted: !!regResult.escalationAttempted,
+        capacityExceeded: !!regResult.capacityExceeded,
+      });
     } else {
       const firstErr = (regResult.errors || [])[0] || regResult.error || "不明";
       console.error(`  -> 登録失敗: ${firstErr}`);
@@ -64,6 +72,8 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep, rei
         errors: regResult.errors || [],
         score: regResult.score || null,
         escalated: !!regResult.escalated,
+        escalationAttempted: !!regResult.escalationAttempted,
+        capacityExceeded: !!regResult.capacityExceeded,
       });
     }
   } catch (e) {
@@ -95,11 +105,43 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep, rei
     }
   }
 
+  // ── capacity fallback (escalation 試行後の保留 fallback) 成功時の Slack 通知 ──
+  // escalated:false / capacityExceeded:true で SUCCESS となるケース。既存 escalation
+  // success 通知 (escalated:true) とは排他、同時発火しない。
+  if (regResult.saved && regResult.capacityExceeded) {
+    try {
+      const cfg = getEscalationConfig();
+      const kishaCode = reinsId ? `fng${reinsId}` : "";
+      const text = formatCapacityFallbackMessage(
+        {
+          propertyName: propertyName || reinsId || "",
+          kishaCode,
+          score: regResult.score ?? "",
+          threshold: cfg.threshold,
+        },
+        cfg.slack
+      );
+      const sent = await slack.notifyEscalationSuccess({ channel: cfg.slack.channel, text });
+      if (sent.ok) {
+        console.error(`  [slack] capacity fallback 通知 → #${cfg.slack.channelName} (ts: ${sent.ts})`);
+        logStep("slack_notify_capacity_fallback", { ok: true, ts: sent.ts });
+      } else {
+        console.error(`  [slack] capacity fallback 通知スキップ/失敗: ${sent.error || "skipped"}`);
+        logStep("slack_notify_capacity_fallback", { ok: false, error: sent.error || "skipped" });
+      }
+    } catch (e) {
+      console.error(`  [slack] capacity fallback 通知 例外: ${e.message}`);
+      logStep("slack_notify_capacity_fallback", { ok: false, error: e.message });
+    }
+  }
+
   const out = {
     status: regResult.saved ? "SUCCESS" : "REG_FAIL",
     score: regResult.score || null,
     registrationType: regResult.registrationType,
     escalated: !!regResult.escalated,
+    escalationAttempted: !!regResult.escalationAttempted,
+    capacityExceeded: !!regResult.capacityExceeded,
     errors: regResult.errors || [],
     exceptionMessage,
   };

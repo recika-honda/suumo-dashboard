@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>suumo-dashboard — Blueprint</title>
+  <style>
+    :root {
+      --bg: #f6f1e8; --fg: #2a2620; --muted: #8b8678;
+      --accent: #6b7a5a; --line: #d8d0c0; --code-bg: rgba(0,0,0,0.04);
+    }
+    body { margin: 0; font: 15px/1.7 "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 48px 32px 96px; }
+    h1 { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 600; font-size: 32px; margin: 0 0 4px; letter-spacing: 0.02em; }
+    h2 { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 600; font-size: 22px; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+    h3 { font-size: 17px; margin: 28px 0 8px; }
+    h4 { font-size: 15px; margin: 20px 0 6px; color: var(--accent); }
+    p { margin: 12px 0; }
+    code { background: var(--code-bg); padding: 1px 6px; border-radius: 3px; font: 13px ui-monospace, "SF Mono", Menlo, monospace; }
+    pre { background: #fff8ec; border: 1px solid var(--line); border-radius: 4px; padding: 16px; overflow-x: auto; font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+    pre code { background: none; padding: 0; }
+    pre.mermaid { background: #fcfaf3; text-align: center; }
+    table { border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+    th, td { border: 1px solid var(--line); padding: 8px 14px; text-align: left; vertical-align: top; }
+    th { background: #efe9dc; font-weight: 600; }
+    blockquote { margin: 12px 0; padding: 8px 16px; border-left: 3px solid var(--accent); color: var(--muted); background: rgba(107,122,90,0.05); }
+    ul, ol { padding-left: 24px; }
+    li { margin: 4px 0; }
+    hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+    a { color: var(--accent); }
+    .sub { color: var(--muted); margin: 0 0 32px; font-size: 13px; }
+    .meta { color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 56px; }
+    .meta code { font-size: 11px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>suumo-dashboard — Blueprint</h1>
+  <p class="sub">04_FANGO / FNG26 配下の code project. REINS → forrent.jp 入稿自動化パイプライン</p>
+
+  <h2>Purpose / Scope</h2>
+  <p>FANGO の不動産仲介業向け AI ツール群のうち、REINS から取得した賃貸物件データを forrent.jp (athome 系入稿チャネル) に自動入稿するパイプライン。最終目標は kento の手作業 0、watch-nyuko の hourly cycle で「広告待ち」を自動消化し、scoring の高い物件は「掲載指示」まで自動昇格させる。</p>
+  <ul>
+    <li><strong>In</strong>: REINS 検索・抽出、画像分類 (OpenAI Vision)、テキスト生成 (Anthropic + OpenAI)、forrent.jp 入稿フォーム充填、forrent 名寄せスコア取得 + escalation、Notion DB 状態管理、Slack 通知、物確 PF (itandi BB) cascade 画像補完</li>
+    <li><strong>Out</strong>: SUUMO / HOMES 等 forrent 以外のポータルへの入稿 (将来候補)、買主側マッチング、契約管理</li>
+  </ul>
+
+  <h2>Stack</h2>
+  <table>
+    <thead><tr><th>Layer</th><th>Choice</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Language / Runtime</td><td>JavaScript (Node 24+、no TypeScript、no bundler)</td><td>kento は非エンジニア。型ヘビーは保守コスト増、Vanilla で十分</td></tr>
+      <tr><td>Frontend</td><td>vanilla HTML / CSS / JS (`public/`)</td><td>Phase 6 で Next.js / React / Tailwind / Framer Motion / Socket.IO 全削除。polling 方式で run.json を読むだけで足りる</td></tr>
+      <tr><td>Backend</td><td>Node 標準 http (`api-server.js`)</td><td>Express も不要。3 endpoint (POST /run, GET /status, GET /history) のみ</td></tr>
+      <tr><td>Browser Automation</td><td>Playwright (Chromium, headed)</td><td>REINS が headless を bot 検出するため headed 必須 (`NYUKO_HEADLESS=1` のみ headless、debug 用)</td></tr>
+      <tr><td>AI</td><td>OpenAI gpt-4o + detail:high (Vision)、Anthropic Claude (text)</td><td>Phase 1 で 4o-mini+low → 4o+high。04/05 検出と 21 誤分類抑制の効果実証</td></tr>
+      <tr><td>Image</td><td>Sharp (resize / crop)</td><td>forrent への upload 前に正規化</td></tr>
+      <tr><td>State</td><td>Notion DB「広告待ち」(Status: 広告待ち / 掲載保留 / 掲載指示済み / 入稿失敗 / 画像欠落 等)</td><td>kento + ファンテイズ大木さんが見る唯一の interface</td></tr>
+      <tr><td>Notify</td><td>Slack #ex_fango (escalation 通知)</td><td>Phase 7+ から、score ≥ 34 で 掲載指示昇格時に</td></tr>
+      <tr><td>Test</td><td>node test-*.js (`npm test`)、152 cases</td><td>bun test は `*.test.js` パターンしか拾わないため使わない</td></tr>
+      <tr><td>Deploy / Schedule</td><td>launchd (hourly watch-nyuko / 03:00 archive-runs)</td><td>kento の Mac mini 24/7 稼動</td></tr>
+      <tr><td>Auth / Secrets</td><td>`.env.local` (gitignore 済み)</td><td>REINS / Notion / OpenAI / Anthropic / Slack / itandi / ielovebb</td></tr>
+    </tbody>
+  </table>
+
+  <h2>System Overview</h2>
+  <pre class="mermaid">
+graph TB
+  notion[(Notion 広告待ち DB)] -->|fetchPending| batch[batch-nyuko.js]
+  watchd[launchd hourly] --> watch[watch-nyuko.js]
+  watch -->|spawn| batch
+  batch -->|processProperty| pipeline
+  api[api-server.js POST /run] -->|spawn| run1[runNyuko.js]
+  run1 -->|processProperty| pipeline
+
+  subgraph pipeline[6-stage pipeline]
+    s1[01 reins-extract] --> s2[02 images-download<br/>+ Phase 2 early-exit<br/>+ Phase 3a cascade]
+    s2 --> s3[03 images-classify<br/>OpenAI Vision]
+    s3 --> s4[04 texts-generate<br/>Anthropic Claude]
+    s4 --> s5[05 forrent-fill]
+    s5 --> s6[06 forrent-register<br/>+ escalation]
+  end
+
+  s3 -.->|missing 04/05| bukaku[bukaku 補完<br/>itandi/ielovebb]
+  s2 -.->|raw <= 2| cascade[image-cascade<br/>itandi 検索]
+  s6 -->|score >= 34| escalate[escalation 路線<br/>shijiIsize=1 + sumapiku + tenpiku]
+  escalate --> slack[Slack #ex_fango]
+  s6 --> notion2[(Notion 状態 update)]
+  </pre>
+
+  <h2>Pipeline Stages</h2>
+  <table>
+    <thead><tr><th>Stage</th><th>Responsibility</th><th>Key File</th></tr></thead>
+    <tbody>
+      <tr><td>01 reins-extract</td><td>REINS 検索 → 物件詳細 → reinsData 構築。早期 spec validation (建物名/部屋番号/使用部分面積/地上階層)</td><td><code>scripts/stages/01-reins-extract.js</code></td></tr>
+      <tr><td>02 images-download</td><td>REINS 画像 screenshot。raw ≤ 2 で Phase 2 early-exit (cascade 試行 → miss なら IMAGE_INSUFFICIENT)</td><td><code>scripts/stages/02-images-download.js</code></td></tr>
+      <tr><td>03 images-classify</td><td>OpenAI Vision (gpt-4o + high) で 21 カテゴリ分類。5pt カテゴリ欠落時 bukaku 補完 (商号判定経路)</td><td><code>scripts/stages/03-images-classify.js</code></td></tr>
+      <tr><td>04 texts-generate</td><td>Claude + OpenAI でキャッチコピー / フリーコメント生成</td><td><code>scripts/stages/04-texts-generate.js</code></td></tr>
+      <tr><td>05 forrent-fill</td><td>forrent.jp 入稿フォーム 54 項目充填。sanitizeForForrentText で禁止文字対策</td><td><code>scripts/stages/05-forrent-fill.js</code></td></tr>
+      <tr><td>06 forrent-register</td><td>確認画面 → score 取得 → escalation 判定 → 登録。失敗時 validation.json 出力</td><td><code>scripts/stages/06-forrent-register.js</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Components (skills/)</h2>
+  <ul>
+    <li><code>reins.js</code> — REINS login / 物件番号検索 / extractPropertyData / extractImageData / screenshotAllImages</li>
+    <li><code>forrent.js</code> (facade, 67 LOC) + <code>forrent/*</code> 11 モジュール — Phase 7 分割。login / navigate / fillTexts / fillTokucho / fillTransport / fillImages / fillShuhen / fillForm / register / validate / form-helpers / session / constants</li>
+    <li><code>image-ai.js</code> — OpenAI Vision 分類 (env で model/detail 上書き可)、SUUMO_CATEGORIES 21 種、pickFallbackCategory (04/05 不可逆カテゴリ除外)</li>
+    <li><code>text-ai.js</code> — Anthropic + OpenAI でテキスト生成</li>
+    <li><code>bukaku.js</code> — 商号 → 物確 PF 判定 (`detectPlatform`)、itandi BB / いえらぶBB primitive (login / search / get images / download)。Phase 3a で primitives は export 化、cascade 経由でも再利用</li>
+    <li><code>image-cascade.js</code> (Phase 3a 新規) — 商号判定なし cascade orchestrator。itandi → atbb → essquare (Phase 3b/c で拡張) を順番に試行、最初に hit した PF で stop</li>
+    <li><code>score-escalation.js</code> — shouldEscalate / formatSlackMessage / loadConfigFromDisk (純関数、lazy init)</li>
+    <li><code>score-checker.js</code> — forrent 名寄せスコア取得</li>
+    <li><code>slack.js</code> — DM / channel 通知 (notifyNyukoSuccess / notifyError / notifyEscalationSuccess)</li>
+    <li><code>google-images.js</code> / <code>google-maps.js</code> — 周辺施設画像 + 地図取得</li>
+  </ul>
+
+  <h2>Data Model</h2>
+
+  <h3>Notion DB「広告待ち」Status</h3>
+  <table>
+    <thead><tr><th>option</th><th>color</th><th>遷移トリガ</th></tr></thead>
+    <tbody>
+      <tr><td>広告待ち</td><td>default</td><td>初期状態 (transient 失敗時も維持)</td></tr>
+      <tr><td>掲載保留</td><td>yellow</td><td>SUCCESS かつ score < 34</td></tr>
+      <tr><td>掲載指示済み</td><td>blue</td><td>SUCCESS かつ score ≥ 34 (escalation 成功)</td></tr>
+      <tr><td>入稿失敗</td><td>purple</td><td>REG_FAIL / NOT_FOUND (恒久失敗、retry loop 停止)</td></tr>
+      <tr><td>画像欠落</td><td>orange</td><td>IMAGE_INSUFFICIENT (Phase 2、素材依頼ハンドオフ)</td></tr>
+      <tr><td>掲載中 / 要取り下げ / 取下済み / 時間超過 / 確認待ち 等</td><td>—</td><td>運用フロー手動遷移</td></tr>
+    </tbody>
+  </table>
+
+  <h3>run.json schema</h3>
+  <pre>{
+  "reinsId": "100139126513",
+  "startedAt": ISO8601,
+  "finishedAt": ISO8601,
+  "status": "SUCCESS|NOT_FOUND|REG_FAIL|IMAGE_INSUFFICIENT|FORRENT_LOGIN_FAIL|TIMEOUT|ERROR",
+  "score": number | null,
+  "escalated": boolean,
+  "registrationType": string | null,
+  "steps": [
+    { "name": string, "at": ISO8601, ...payload }
+  ]
+}</pre>
+
+  <h3>logs/runs/{ts}_{reinsId}/ ディレクトリ</h3>
+  <ul>
+    <li><code>run.json</code> — 全体 status + steps timeline</li>
+    <li><code>01-reins-extract/{input,output}.json</code> — stage I/O</li>
+    <li><code>02-images-download/{input,output}.json</code> 〜 <code>06-forrent-register/...</code></li>
+    <li><code>confirm-attempt1.html</code> / <code>confirm-attempt2.html</code> — forrent 確認画面 snapshot</li>
+    <li><code>validation.json</code> — forrent サーバ validation エラー詳細</li>
+    <li><code>edit-after-modify.html</code> 等 — escalation 路線の中間 snapshot</li>
+  </ul>
+
+  <h2>Key Decisions</h2>
+  <ul>
+    <li><strong>2026-05-15 — Phase 3a: 物確 cascade (商号判定なし)</strong>。bukaku の <code>detectPlatform(商号)</code> が中小元付業者を網羅できず 16/16 中 1 件しか発火しなかったため、商号マップ式を捨て「物件名 + 部屋番号で物確 PF を順番に試す empirical cascade」へ。itandi 着手済、atbb (要 session 管理) / essquare は次回。</li>
+    <li><strong>2026-05-15 — Phase 2: REINS 画像不足の早期 exit</strong>。raw ≤ 2 (env で上書き可) なら stage 03-06 を skip し、Notion を「画像欠落」へフリップ。Phase 3a cascade とセットで運用 (cascade miss → IMAGE_INSUFFICIENT)。</li>
+    <li><strong>2026-05-15 — Phase 1: Vision モデル upgrade</strong>。<code>gpt-4o-mini+low → gpt-4o+high</code> + プロンプト改訂 (21 を最後の手段、誤分類 hard case 例)。1物件 ~$0.005 → ~$0.05 だが絶対値小で正当化。env で上書き可。</li>
+    <li><strong>2026-05-15 — REG_FAIL P1 fix</strong>。<code>toFullWidth</code> を etcHiyo / etcShohiyo に、<code>sanitizeForForrentText</code> (NFKD + strip Latin combining + NFC recompose + toFullWidth + length cap) を catchCopy / freeComment に。日本語の濁点 U+3099 が NFKD で分解されて HTML entity 展開する罠は NFC recompose で抑止。</li>
+    <li><strong>2026-05-14 — Phase 7+: forrent escalation 路線</strong>。score ≥ 34 で 訂正→掲載→sumapiku+tenpiku ON→再確認→登録 + Slack #ex_fango 通知。閾値 <code>config/score-escalation.json</code> + env <code>SCORE_ESCALATION_THRESHOLD</code>。</li>
+    <li><strong>2026-05-14 — Phase 7: forrent.js facade 分割</strong>。3,136 LOC monolith → 67 LOC facade + 11 サブモジュール。public API 完全互換。</li>
+    <li><strong>2026-05-13 — ATBB 路線廃案</strong>。100件評価で実用マッチ率 65.2% (大手系列流通契約なしが構造要因)。bukaku + Phase 3a cascade に方針集約。</li>
+    <li><strong>2026-05 — Phase 6: フロント Vanilla 化</strong>。Next.js / React / Tailwind / Framer Motion / Socket.IO を全削除。polling 方式で十分。</li>
+    <li><strong>REINS は headed 必須</strong>。headless を bot 検出される。<code>NYUKO_HEADLESS=1</code> のみ headless (debug only)。</li>
+    <li><strong>不可逆カテゴリ (04 間取り図 / 05 建物外観) は fallback 対象外</strong>。Vision 失敗時の <code>pickFallbackCategory</code> で 04/05 を強制充填しない (名寄せスコア破壊 + bukaku 発火条件破壊を防ぐ)。</li>
+  </ul>
+
+  <h2>Non-Functional Requirements</h2>
+  <ul>
+    <li><strong>パフォーマンス</strong>: 1 物件 5-10 分 (Vision 12秒 / forrent fill 1分 / register 1分 が主因)。IMAGE_INSUFFICIENT 早期 exit で raw=0 物件は 25 秒に短縮済。</li>
+    <li><strong>並列度</strong>: batch-nyuko は逐次処理 (REINS / forrent の rate limit 配慮)。並列化は将来課題。</li>
+    <li><strong>可用性</strong>: REINS 運用時間 07:00-23:00 JST。それ以外は login fail (現状 retry なし、watch-nyuko が次サイクルで自動拾い)。</li>
+    <li><strong>セキュリティ</strong>: secrets は <code>.env.local</code> のみ、git tracked しない (gitignore 設定済)。Notion トークンは workspace owner 権限。</li>
+    <li><strong>監視</strong>: launchd の <code>com.kento.lamplighter.synctonotion</code> が 1h ごとに Notion sync。失敗は mailbox 経由で Manager Agent。</li>
+  </ul>
+
+  <h2>KPIs</h2>
+  <ul>
+    <li><strong>掲載指示昇格率</strong> = SUCCESS かつ escalated:true の件数 / 処理件数。前回バッチ 5/21 = 23.8%。Phase 1+3a で +N 期待。</li>
+    <li><strong>SUCCESS 率</strong> = SUCCESS 件数 / 処理件数。前回 14/21 = 66.7%。P1 fix 後 +3 (REG_FAIL 3 件解消) → 80%+ 期待。</li>
+    <li><strong>cascade hit 率</strong> = Phase 3a cascade が画像取得できた件数 / cascade 発火件数。watch-nyuko 数日で観測。</li>
+    <li><strong>IMAGE_INSUFFICIENT 率</strong> = 画像欠落判定 / 処理件数。素材依頼ワークフロー量の指標。</li>
+    <li><strong>平均 score</strong> = SUCCESS 物件の forrent 名寄せスコア平均。Phase 1 で底上げ期待。</li>
+  </ul>
+
+  <h2>Out of Scope</h2>
+  <ul>
+    <li>forrent 以外のポータル (SUUMO 直接 / HOMES) への入稿 — 将来候補</li>
+    <li>買主側マッチング・チャットボット — `property-chatbot` 別 PJ</li>
+    <li>契約書作成・申込書連携 — 別 PJ</li>
+    <li>並列 batch 処理 — REINS / forrent rate limit 不明、将来検証</li>
+  </ul>
+
+  <div class="meta">
+    最終更新: 2026-05-15 · このファイルは AI が継続編集します · kento は <code>localhost:7780/p/04_FANGO/FNG26_AI入稿システム</code> または直接 file:// で閲覧
+  </div>
+</div>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+</script>
+</body>
+</html>

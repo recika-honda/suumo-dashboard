@@ -13,12 +13,14 @@ const path = require("path");
 
 const DEFAULT_CONFIG = Object.freeze({
   threshold: 34,
-  slack: {
+  slack: Object.freeze({
     channel: "C09B0527NSF",
     channelName: "ex_fango",
     messageTemplate:
       "🤖完全自動入稿完了\n物件名: {propertyName}\n貴社物件コード: {kishaCode}\n最終名寄せスコア: {score}",
-  },
+    capacityFallbackTemplate:
+      "[capacity fallback] 掲載指示できず保留にしました\n物件名: {propertyName}\n貴社物件コード: {kishaCode}\n名寄せスコア: {score} (閾値 {threshold} 以上だが forrent 掲載枠フル)",
+  }),
 });
 
 const CONFIG_PATH = path.join(__dirname, "..", "config", "score-escalation.json");
@@ -105,6 +107,42 @@ function formatSlackMessage(vars, slackCfg) {
     .replace("{score}", String(vars.score ?? ""));
 }
 
+/**
+ * Capacity fallback (掲載指示できず保留にしました) 通知用メッセージ整形 (純関数)。
+ *
+ * 名寄せスコアは閾値以上だが、forrent 側の掲載枠フル等で escalation を昇格できず
+ * 「掲載保留」のままにした場合の Slack 通知文を整形する。
+ *
+ * slackCfg は以下のいずれかを受け取る:
+ * - string: テンプレート文字列そのもの
+ * - object: { capacityFallbackTemplate?: string } 形式 (config.slack を直接渡す想定)
+ * - 未指定/null: getEscalationConfig().slack.capacityFallbackTemplate を使う
+ * いずれも欠落時は DEFAULT_CONFIG.slack.capacityFallbackTemplate に fallback。
+ *
+ * @param {{propertyName:string, kishaCode:string, score:number, threshold:number}} vars
+ * @param {string|{capacityFallbackTemplate?:string}} [slackCfg]
+ * @returns {string}
+ */
+function formatCapacityFallbackMessage(vars, slackCfg) {
+  let template;
+  if (typeof slackCfg === "string") {
+    template = slackCfg;
+  } else if (slackCfg && typeof slackCfg.capacityFallbackTemplate === "string") {
+    template = slackCfg.capacityFallbackTemplate;
+  } else if (slackCfg === undefined || slackCfg === null) {
+    const cfg = getEscalationConfig();
+    template = (cfg && cfg.slack && cfg.slack.capacityFallbackTemplate)
+      || DEFAULT_CONFIG.slack.capacityFallbackTemplate;
+  } else {
+    template = DEFAULT_CONFIG.slack.capacityFallbackTemplate;
+  }
+  return template
+    .replace("{propertyName}", String(vars.propertyName ?? ""))
+    .replace("{kishaCode}", String(vars.kishaCode ?? ""))
+    .replace("{score}", String(vars.score ?? ""))
+    .replace("{threshold}", String(vars.threshold ?? ""));
+}
+
 module.exports = {
   DEFAULT_CONFIG,
   CONFIG_PATH,
@@ -113,4 +151,5 @@ module.exports = {
   clearCache,
   shouldEscalate,
   formatSlackMessage,
+  formatCapacityFallbackMessage,
 };

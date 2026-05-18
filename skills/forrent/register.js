@@ -24,6 +24,25 @@ const FINAL_READY_TIMEOUT_MS = 20000;
 const SHIJI_APPEAR_TIMEOUT_MS = 20000;
 const CHECKBOX_ENABLE_TIMEOUT_MS = 5000;
 
+// ── capacity-exceeded fallback (2026-05-17 REG_FAIL crisis 対策) ──
+// forrent の掲載枠 (ネット / スマピク / 店舗ピックアップ) 上限到達時の文言
+// 部分一致 regex で文言改定にもある程度耐性を持たせる
+const CAPACITY_EXCEEDED_PATTERN = /掲載可能件数を超えている/;
+
+/**
+ * バリデーション errors 配列が capacity-exceeded 系のみで構成されているか判定する pure helper。
+ *
+ * - 全要素が string でかつ CAPACITY_EXCEEDED_PATTERN にマッチする時のみ true
+ * - 1 件でも他の本物エラーが混じれば false (通常 REG_FAIL に倒すため)
+ * - null / non-array / 空配列 / non-string element はすべて false (誤判定回避、安全側 degrade)
+ *
+ * 設計: capacity-fallback-design.md §4
+ */
+function isCapacityExceededOnly(errors) {
+  if (!Array.isArray(errors) || errors.length === 0) return false;
+  return errors.every((e) => typeof e === "string" && CAPACITY_EXCEEDED_PATTERN.test(e));
+}
+
 /**
  * バリデーション情報を確認画面のフレームから収集する。
  * 「エラー 一覧」見出しだけでなく、内側のリスト項目・フィールド別メッセージ・
@@ -230,6 +249,62 @@ async function modifyShijiAndCheckboxes(editFrame) {
 }
 
 /**
+ * 編集画面で shijiIsize=3 (保留) に戻し、sumapiku/tenpiku を uncheck する。
+ * escalation で枠超過拒否された後の fallback path 専用。
+ *
+ * shijiIsize=3 を選ぶと forrent の changeShiji() が toggleSumapiku/toggleTenpiku
+ * を駆動して両 checkbox を disabled + uncheck にするはずだが、念のため明示的に
+ * checked=false を立てる (race condition 保険、modifyShijiAndCheckboxes と対称)。
+ *
+ * @returns {Promise<{ok:boolean, error?:string, shijiValue?:string, sumapikuChecked?:boolean, tenpikuChecked?:boolean}>}
+ */
+async function revertShijiAndCheckboxes(editFrame) {
+  await editFrame.evaluate(() => window.scrollTo(0, 0));
+
+  // ── #shijiIsize の出現を polling 待機 ──
+  try {
+    await editFrame.waitForFunction(
+      () => !!document.getElementById("shijiIsize"),
+      { timeout: SHIJI_APPEAR_TIMEOUT_MS }
+    );
+  } catch (e) {
+    return { ok: false, error: `#shijiIsize が編集画面に現れませんでした (fallback, ${SHIJI_APPEAR_TIMEOUT_MS / 1000}s)` };
+  }
+
+  // ── Playwright native API で shijiIsize=3 (保留) を設定 ──
+  try {
+    await editFrame.selectOption("#shijiIsize", "3");
+  } catch (e) {
+    return { ok: false, error: `shijiIsize 保留 selectOption 失敗: ${e.message.slice(0, 200)}` };
+  }
+
+  // ── 念のため明示 uncheck (changeShiji() の onchange と二重保険) ──
+  try {
+    await editFrame.evaluate(() => {
+      for (const id of ["sumapiku", "tenpiku"]) {
+        const el = document.getElementById(id);
+        if (el && el.checked) el.checked = false;
+      }
+    });
+  } catch {
+    // best-effort: 失敗しても shijiIsize=3 で forrent JS 側が disabled にするはず
+  }
+
+  // ── 結果確認 ──
+  return await editFrame.evaluate(() => {
+    const sel = document.getElementById("shijiIsize");
+    const sumapiku = document.getElementById("sumapiku");
+    const tenpiku = document.getElementById("tenpiku");
+    return {
+      ok: true,
+      shijiValue: sel?.value,
+      sumapikuChecked: !!sumapiku?.checked,
+      tenpikuChecked: !!tenpiku?.checked,
+    };
+  });
+}
+
+/**
  * 確認画面で「登録」ボタンを探してクリック。確認/一時/削除/戻 を含む候補は除外。
  */
 async function clickRegistrationButton(confirmFrame) {
@@ -357,6 +432,170 @@ async function waitForFinalReady(page, fallbackFrame, timeoutMs = 20000) {
   return page.frame({ name: "main" }) || fallbackFrame;
 }
 
+/**
+ * Capacity-exceeded 時の fallback: escalation で枠超過拒否された後、
+ * 編集画面に戻って shiji=3 (保留) + sumapiku/tenpiku uncheck → 再 confirm → 登録 を実行。
+ *
+ * 最終的に「通常路線 (掲載保留) と同じ form 状態」で登録するので、新しい form 操作は
+ * 不要 (selectOption + uncheck の Playwright native API のみ)。
+ *
+ * 戻り値は registerProperty と同じ shape に additive で:
+ *   - escalationAttempted:true (一度 escalation を試みた事実)
+ *   - capacityExceeded:true   (capacity 起因で降格した signal、集計用)
+ * 成功時は escalated:false / registrationType:"掲載保留" で返す。
+ *
+ * @param {object} setDialogPhase - registerProperty closure 内の dialogPhase setter
+ *   (page.on("dialog") listener が closure で参照する dialogPhase 変数を更新するため)
+ *
+ * 設計: capacity-fallback-design.md §3 + §5
+ */
+async function attemptCapacityFallback({
+  page, confirmFrame, mainFrame, artifactDir, dialogs,
+  initialScore, escalateScore, escalationCfg, setDialogPhase,
+}) {
+  // ── 現在の frame が確認画面か編集画面かを判定 ──
+  // forrent は capacity-exceeded エラーを「確認画面」ではなく
+  // 「エラー付き編集画面 (title=新規物件登録, #regButton2 あり, #teisei なし)」として
+  // 返すケースがある。その場合 clickTeiseiButton は #teisei を見つけられず失敗する。
+  // 編集画面 signature: #regButton2 存在 かつ #teisei 不在
+  let isAlreadyOnEditPage = false;
+  try {
+    isAlreadyOnEditPage = await confirmFrame.evaluate(() => {
+      return !!(document.getElementById("regButton2")) && !document.getElementById("teisei");
+    });
+  } catch {
+    // frame detached 等 → 保守的に確認画面扱いで続行
+  }
+
+  let editFrame;
+  if (isAlreadyOnEditPage) {
+    // forrent がエラーを含んだまま編集画面を返した → 訂正クリック不要、このまま編集画面を使う
+    console.log("[forrent] fallback: 既に編集画面にいるため teisei クリックをスキップ");
+    if (setDialogPhase) setDialogPhase("capacity-fallback-modify");
+    editFrame = confirmFrame;
+    await saveFrameArtifacts(page, editFrame, artifactDir, "edit-after-fallback");
+  } else {
+    // 通常: 確認画面から訂正で編集画面へ戻る
+    if (setDialogPhase) setDialogPhase("capacity-fallback-teisei");
+    const teiseiClicked = await clickTeiseiButton(confirmFrame);
+    if (!teiseiClicked) {
+      return {
+        saved: false, registrationType: null,
+        score: escalateScore,
+        escalated: true, escalationAttempted: true, capacityExceeded: true,
+        threshold: escalationCfg.threshold, dialogs,
+        error: "fallback: 訂正ボタンが見つかりません",
+      };
+    }
+    console.log(`[forrent] fallback 訂正クリック: ${teiseiClicked}`);
+    editFrame = await waitForEditReady(page, confirmFrame, EDIT_READY_TIMEOUT_MS);
+    await saveFrameArtifacts(page, editFrame, artifactDir, "edit-after-fallback");
+  }
+
+  // ── shiji=3 (保留) + uncheck ──
+  if (setDialogPhase) setDialogPhase("capacity-fallback-modify");
+  const revert = await revertShijiAndCheckboxes(editFrame);
+  if (!revert.ok) {
+    await saveFrameArtifacts(page, editFrame, artifactDir, "edit-fallback-failed");
+    return {
+      saved: false, registrationType: null,
+      score: escalateScore,
+      escalated: true, escalationAttempted: true, capacityExceeded: true,
+      threshold: escalationCfg.threshold, dialogs,
+      error: revert.error,
+    };
+  }
+  console.log(`[forrent] fallback 保留に戻す (shiji=${revert.shijiValue}, sumapiku=${revert.sumapikuChecked}, tenpiku=${revert.tenpikuChecked})`);
+  await editFrame.waitForTimeout(500);
+  await saveFrameArtifacts(page, editFrame, artifactDir, "edit-after-fallback-modify");
+
+  // ── 再確認: regButton2 を再クリック ──
+  if (setDialogPhase) setDialogPhase("capacity-fallback-reconfirm");
+  const reconfirmClicked = await clickConfirmButton(editFrame);
+  if (!reconfirmClicked) {
+    return {
+      saved: false, registrationType: null,
+      score: escalateScore,
+      escalated: true, escalationAttempted: true, capacityExceeded: true,
+      threshold: escalationCfg.threshold, dialogs,
+      error: "fallback: 再確認ボタンが見つかりません",
+    };
+  }
+  console.log(`[forrent] fallback 再確認クリック: ${reconfirmClicked}`);
+  const fallbackConfirmFrame = await waitForConfirmReady(page, editFrame, CONFIRM_READY_TIMEOUT_MS);
+
+  const fallbackValidation = await scrapeValidation(fallbackConfirmFrame);
+  await saveFrameArtifacts(page, fallbackConfirmFrame, artifactDir, "confirm-after-fallback");
+  if (fallbackValidation.hasError) {
+    console.log(`[forrent] fallback バリデーションエラー: ${fallbackValidation.errors.slice(0, 8).join(" / ")}`);
+    if (artifactDir) {
+      try {
+        fs.writeFileSync(
+          path.join(artifactDir, "validation-after-fallback.json"),
+          JSON.stringify(fallbackValidation, null, 2)
+        );
+      } catch {}
+    }
+    return {
+      saved: false, registrationType: null,
+      score: fallbackValidation.score || escalateScore,
+      escalated: true, escalationAttempted: true, capacityExceeded: true,
+      threshold: escalationCfg.threshold, dialogs,
+      errors: fallbackValidation.errors,
+      errorRows: fallbackValidation.errorRows,
+      error: `fallback バリデーションエラー: ${fallbackValidation.errors[0] || "詳細不明"}`,
+    };
+  }
+
+  // ── 登録 ──
+  if (setDialogPhase) setDialogPhase("capacity-fallback-register");
+  const fallbackScore = fallbackValidation.score || escalateScore;
+  console.log(`[forrent] fallback 確認画面到達 (score: ${fallbackScore}) → 登録ボタン押下`);
+  const regClicked = await clickRegistrationButton(fallbackConfirmFrame);
+  if (!regClicked) {
+    return {
+      saved: false, registrationType: null,
+      score: fallbackScore,
+      escalated: true, escalationAttempted: true, capacityExceeded: true,
+      threshold: escalationCfg.threshold, dialogs,
+      error: "fallback: 登録ボタンが見つかりません",
+    };
+  }
+  console.log(`[forrent] fallback 登録ボタンクリック: ${regClicked}`);
+
+  const finalFrame = await waitForFinalReady(page, fallbackConfirmFrame, FINAL_READY_TIMEOUT_MS);
+  const result = await readFinalState(finalFrame);
+  const finalScore = result.score || fallbackScore;
+  console.log(`[forrent] === REGISTER END === fallback 掲載保留判定 (score: ${finalScore}, complete: ${result.isComplete}, errorText: ${result.hasErrorText})`);
+  await saveFrameArtifacts(page, finalFrame, artifactDir, "final-fallback");
+
+  if (!result.isComplete) {
+    const errMsg = result.hasErrorText
+      ? `fallback 登録後にエラー画面検出: ${(result.bodySnippet || "").slice(0, 400)}`
+      : "fallback 登録完了マーカーが現れませんでした";
+    return {
+      saved: false, registrationType: null,
+      score: finalScore,
+      escalated: true, escalationAttempted: true, capacityExceeded: true,
+      threshold: escalationCfg.threshold, dialogs,
+      errors: [errMsg],
+      error: errMsg,
+    };
+  }
+
+  return {
+    saved: true,
+    registrationType: "掲載保留",
+    score: finalScore,
+    escalated: false,            // 最終的には掲載保留扱い (pipeline-statuses.js が "掲載保留" を返す)
+    escalationAttempted: true,   // 一度 escalation を試みた事実は記録
+    capacityExceeded: true,      // capacity 起因で降格した signal (Phase ζ 集計用)
+    threshold: escalationCfg.threshold,
+    dialogs,
+    errors: [],
+  };
+}
+
 // ──────────────────────────────────────────────────────────────
 // メイン: registerProperty
 // ──────────────────────────────────────────────────────────────
@@ -397,6 +636,9 @@ async function registerProperty(page, mainFrame, opts = {}) {
   try {
     const dialogs = [];
     let dialogPhase = "phase1";
+    // setDialogPhase: attemptCapacityFallback など外部関数から closure 内の dialogPhase
+    // を更新するための setter。listener 自身は dialogPhase を closure 参照し続ける。
+    const setDialogPhase = (p) => { dialogPhase = p; };
     page.on("dialog", async (dialog) => {
       dialogs.push({ phase: dialogPhase, type: dialog.type(), message: dialog.message() });
       await dialog.accept();
@@ -514,6 +756,27 @@ async function registerProperty(page, mainFrame, opts = {}) {
             );
           } catch {}
         }
+
+        // ── capacity-exceeded fallback (2026-05-17 REG_FAIL crisis 対策) ──
+        // 全 errors が「掲載可能件数を超えている」系のみ → shiji=3 (保留) に戻して
+        // 登録完了させる。1 件でも他の本物エラーが混じれば通常 REG_FAIL に倒す。
+        // CAPACITY_FALLBACK_ENABLED=0 で env-disable 可能 (instant rollback)。
+        const fallbackEnabled = process.env.CAPACITY_FALLBACK_ENABLED !== "0";
+        if (fallbackEnabled && isCapacityExceededOnly(revalidation.errors)) {
+          console.log("[forrent] === CAPACITY EXCEEDED → FALLBACK TO 掲載保留 ===");
+          return await attemptCapacityFallback({
+            page,
+            confirmFrame,
+            mainFrame,
+            artifactDir,
+            dialogs,
+            initialScore,
+            escalateScore: revalidation.score || initialScore,
+            escalationCfg,
+            setDialogPhase,
+          });
+        }
+
         return {
           saved: false,
           registrationType: null,
@@ -630,4 +893,5 @@ module.exports = {
   scrapeValidation,
   saveFrameArtifacts,
   registerProperty,
+  isCapacityExceededOnly,
 };

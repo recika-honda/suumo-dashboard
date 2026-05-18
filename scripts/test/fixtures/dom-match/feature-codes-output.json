@@ -1,0 +1,19 @@
+{
+  "checkedCodes": ["0305", "0517", "1001", "1201"],
+  "evidence": {
+    "0305": [
+      { "source": "maisoku", "reason": "label match", "matched": "最上階" }
+    ],
+    "0517": [
+      { "source": "building", "reason": "building inference", "matched": "宅配ボックス" },
+      { "source": "maisoku", "reason": "label match", "matched": "宅配ボックス" }
+    ],
+    "1001": [
+      { "source": "building", "reason": "building inference", "matched": "南向き" },
+      { "source": "maisoku", "reason": "label match", "matched": "南向き" }
+    ],
+    "1201": [
+      { "source": "setsubi", "reason": "keyword match", "matched": "オートロック" }
+    ]
+  }
+}

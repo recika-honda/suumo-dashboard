@@ -41,6 +41,7 @@ const { readStageInput, readStageOutput } = require("./lib/artifact");
 const { runReinsExtract } = require("./stages/01-reins-extract");
 const { runImagesDownload } = require("./stages/02-images-download");
 const { runImagesClassify } = require("./stages/03-images-classify");
+const { runFeatureCodesResolve } = require("./stages/03b-feature-codes-resolve");
 const { runTextsGenerate } = require("./stages/04-texts-generate");
 const { runForrentFill } = require("./stages/05-forrent-fill");
 const { runForrentRegister } = require("./stages/06-forrent-register");
@@ -193,6 +194,20 @@ async function main() {
       r4 = await runTextsGenerate({ reinsData: r1.reinsData, logStep, runDir });
     }
 
+    // Stage 03b (Phase β T004): feature code SSOT — recompute or restore from
+    // an existing artifact. 03b is NOT in STAGES[] (always considered "off-band"
+    // pure compute, ~ms), so we read its output directly. When absent or env
+    // says skip, fill-tokucho will fall back to its inline SSOT delegate.
+    let r3b = readStageOutput(runDir, "03b-feature-codes-resolve");
+    if (!r3b && process.env.PHASE_BETA_03B !== "0") {
+      r3b = await runFeatureCodesResolve({
+        reinsData: r1.reinsData,
+        maisokuText: null,
+        logStep,
+        runDir,
+      });
+    }
+
     // ── stage 05 + 06 (forrentPage を新規取得) ──
     let r5;
     try {
@@ -202,6 +217,7 @@ async function main() {
         processedImages: r3.processedImages,
         initialCostData: r3.initialCostData,
         texts: r4,
+        featureCodes: r3b,
         logStep,
         runDir,
       });

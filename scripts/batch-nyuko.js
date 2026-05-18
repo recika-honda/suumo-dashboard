@@ -30,7 +30,10 @@ const { resolveNotionStatus } = require("./pipeline-statuses");
 const { buildFeedbackProperties } = require("./lib/notion-feedback");
 const { runReinsExtract } = require("./stages/01-reins-extract");
 const { runImagesDownload } = require("./stages/02-images-download");
+const { runMaisokuFetch } = require("./stages/02b-maisoku-fetch");
+const { runMaisokuTextExtract } = require("./stages/02c-maisoku-text-extract");
 const { runImagesClassify } = require("./stages/03-images-classify");
+const { runFeatureCodesResolve } = require("./stages/03b-feature-codes-resolve");
 const { runTextsGenerate } = require("./stages/04-texts-generate");
 const { runForrentFill } = require("./stages/05-forrent-fill");
 const { runForrentRegister } = require("./stages/06-forrent-register");
@@ -225,10 +228,45 @@ async function processProperty(context, reinsPage, reinsId, index, total, runLog
       rawCount: r2.rawCount,
     };
   }
+
+  // Stage 02b (Phase γ T002): マイソク PDF 取得。
+  // zmnFlmi 空 / 図面参照 button 無の物件は skipped で返り、後続 stage に影響しない。
+  // env PHASE_GAMMA_MAISOKU=0 で stage 全体を skip 可能 (rollback 経路、02c も連動 skip)。
+  let r2b = null;
+  if (process.env.PHASE_GAMMA_MAISOKU !== "0") {
+    r2b = await runMaisokuFetch({ reinsPage, runDir, logStep, reinsData });
+  }
+
+  // Stage 02c (Phase γ T003): マイソク text 抽出 (dual-mode pdftotext → Vision OCR)。
+  // 02b が skip / error の時は maisokuPdfPath=null → source="skipped" で safe pass-through。
+  // env PHASE_GAMMA_OCR=0 で Vision OCR fallback を抑制 (pdftotext-only mode)。
+  // 戻り値は Phase γ では 03b に流さない (Phase β contract maintained: r3b 引数
+  // maisokuText は引き続き null)。Phase δ で 03b への wire を行う。artifact
+  // (logs/runs/{ts}/02c-maisoku-text-extract/) は stage 内で必ず書く。
+  if (process.env.PHASE_GAMMA_MAISOKU !== "0") {
+    await runMaisokuTextExtract({
+      maisokuPdfPath: r2b?.maisokuPdfPath || null,
+      runDir,
+      logStep,
+    });
+  }
+
   const r3 = await runImagesClassify({
     context, reinsData, downloaded: r2.downloaded, downloadDir, logStep,
     launchOpts: LAUNCH_OPTS, runDir,
   });
+
+  // Stage 03b (Phase β T003 + T004): feature code SSOT resolution.
+  // Result is wired into Stage 05 (featureCodes) so the consumer in
+  // skills/forrent/fill-tokucho.js can type checkedCodes without re-running
+  // the 3-path inline logic. Set PHASE_BETA_03B=0 to skip entirely and
+  // revert to fill-tokucho's inline-fallback path (SSOT delegate, same
+  // result, slightly less observable).
+  let r3b = null;
+  if (process.env.PHASE_BETA_03B !== "0") {
+    r3b = await runFeatureCodesResolve({ reinsData, maisokuText: null, logStep, runDir });
+  }
+
   const texts = await runTextsGenerate({ reinsData, logStep, runDir });
 
   // ── Step 5-6: try で覆い、例外は ERROR ラベル ──
@@ -238,7 +276,9 @@ async function processProperty(context, reinsPage, reinsId, index, total, runLog
       context, reinsData,
       processedImages: r3.processedImages,
       initialCostData: r3.initialCostData,
-      texts, logStep, runDir,
+      texts,
+      featureCodes: r3b,
+      logStep, runDir,
     });
     if (r5.status === "FORRENT_LOGIN_FAIL") {
       return { reinsId, status: "FORRENT_LOGIN_FAIL", propertyName: reinsData.建物名 };

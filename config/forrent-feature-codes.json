@@ -1,0 +1,910 @@
+{
+  "generated_at": "2026-05-17T06:25:24.957Z",
+  "source_html": "logs/runs/20260517-151109_100139161319/edit-after-teisei.html",
+  "total": 150,
+  "parsed_total": 491,
+  "searchable_total": 140,
+  "allowlist_total": 10,
+  "codes": [
+    {
+      "code": "0102",
+      "label": "2駅利用可",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0103",
+      "label": "2沿線利用可",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0104",
+      "label": "3駅以上利用可",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0105",
+      "label": "3沿線以上利用可",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0201",
+      "label": "耐震構造",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0202",
+      "label": "制震構造",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0203",
+      "label": "免震構造",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0231",
+      "label": "タワー型マンション",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0233",
+      "label": "デザイナーズ",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0252",
+      "label": "バリアフリー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0256",
+      "label": "分譲賃貸",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0257",
+      "label": "四方角部屋",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0305",
+      "label": "最上階",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0408",
+      "label": "事務所付住宅",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0501",
+      "label": "エレベーター",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0502",
+      "label": "エレベーター2基",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0517",
+      "label": "宅配ボックス",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0527",
+      "label": "敷地内ごみ置き場",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0701",
+      "label": "築2年以内",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0702",
+      "label": "築3年以内",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0703",
+      "label": "築5年以内",
+      "searchable": false,
+      "allowlist": true
+    },
+    {
+      "code": "0801",
+      "label": "駐車2台可",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0802",
+      "label": "駐車場2台無料",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0803",
+      "label": "駐車3台可",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0804",
+      "label": "駐車4台可",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0805",
+      "label": "駐車並列2台",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0806",
+      "label": "駐車並列3台",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0807",
+      "label": "ビルトガレージ",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0808",
+      "label": "大型車庫",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0809",
+      "label": "地下車庫",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0810",
+      "label": "シャッター車庫",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0811",
+      "label": "電動シャッター車庫",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0812",
+      "label": "カーポート",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0813",
+      "label": "平面駐車場",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0814",
+      "label": "自走式駐車場",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0816",
+      "label": "駐輪場",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0817",
+      "label": "バイク置場",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0818",
+      "label": "駐車5台以上",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "0819",
+      "label": "駐車場1台無料",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1001",
+      "label": "南向き",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1002",
+      "label": "東南向き",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1003",
+      "label": "南西向き",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1004",
+      "label": "全室南向き",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1005",
+      "label": "全室東南向き",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1006",
+      "label": "全室南西向き",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1007",
+      "label": "角住戸",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1008",
+      "label": "東南角住戸",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1009",
+      "label": "3方角住戸",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1010",
+      "label": "南西角住戸",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1011",
+      "label": "南面2室",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1012",
+      "label": "南面3室",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1013",
+      "label": "南面4室",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1017",
+      "label": "南面リビング",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1108",
+      "label": "専用庭",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1201",
+      "label": "オートロック",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1211",
+      "label": "防犯カメラ",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1215",
+      "label": "24時間有人管理",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1216",
+      "label": "日勤管理",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1218",
+      "label": "セキュリティ会社加入済",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1319",
+      "label": "地下室",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1320",
+      "label": "防音室",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1326",
+      "label": "ロフト",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1327",
+      "label": "メゾネット",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1401",
+      "label": "システムキッチン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1403",
+      "label": "対面式キッチン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1405",
+      "label": "L字型キッチン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1406",
+      "label": "U字型キッチン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1407",
+      "label": "II型キッチン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1408",
+      "label": "アイランドキッチン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1409",
+      "label": "外国製キッチン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1412",
+      "label": "ガスコンロ対応",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1413",
+      "label": "ガスレンジ付",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1414",
+      "label": "2口コンロ",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1415",
+      "label": "3口以上コンロ",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1416",
+      "label": "IHクッキングヒーター",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1421",
+      "label": "ガラストップコンロ",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1436",
+      "label": "都市ガス",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1437",
+      "label": "プロパンガス",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1501",
+      "label": "バストイレ別",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1504",
+      "label": "オートバス",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1505",
+      "label": "追焚機能浴室",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1507",
+      "label": "浴室乾燥機",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1518",
+      "label": "シャワールーム",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1603",
+      "label": "温水洗浄便座",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1701",
+      "label": "洗面所独立",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1806",
+      "label": "床暖房",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1807",
+      "label": "蓄熱式床暖房",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1810",
+      "label": "ビルトインエアコン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "1901",
+      "label": "オール電化",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2001",
+      "label": "バルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2002",
+      "label": "ルーフバルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2003",
+      "label": "ワイドバルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2004",
+      "label": "L字型バルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2005",
+      "label": "南面バルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2006",
+      "label": "2面バルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2007",
+      "label": "3面バルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2008",
+      "label": "両面バルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2009",
+      "label": "2WAYバルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2010",
+      "label": "インナーバルコニー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2101",
+      "label": "フローリング",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2102",
+      "label": "全居室フローリング",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2103",
+      "label": "一部フローリング",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2115",
+      "label": "ホームエレベーター",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2129",
+      "label": "室内洗濯置",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2204",
+      "label": "ウォークインクロゼット",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2205",
+      "label": "ウォークインクロゼット2",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2206",
+      "label": "ウォークスルークロゼット",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2207",
+      "label": "シューズボックス",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2208",
+      "label": "シューズWIC",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2209",
+      "label": "天井高シューズクロゼット",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2221",
+      "label": "床下収納",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2223",
+      "label": "トランクルーム",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2401",
+      "label": "BS・CS",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2402",
+      "label": "BS",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2403",
+      "label": "CS",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2404",
+      "label": "CATV",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2406",
+      "label": "ネット使用料不要",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2408",
+      "label": "高速ネット対応",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2409",
+      "label": "ネット専用回線",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2410",
+      "label": "光ファイバー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2411",
+      "label": "CATVインターネット",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2412",
+      "label": "ISDN対応",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2413",
+      "label": "LAN",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2414",
+      "label": "TVインターホン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2417",
+      "label": "CATV使用料不要",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2609",
+      "label": "リノベーション",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2701",
+      "label": "即入居可",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2705",
+      "label": "ペット相談",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2709",
+      "label": "ルームシェア相談",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2710",
+      "label": "事務所相談",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2711",
+      "label": "楽器相談",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2724",
+      "label": "保証人不要",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2732",
+      "label": "フリーレント",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2733",
+      "label": "特定優良賃貸住宅",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2735",
+      "label": "カスタマイズ可",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2736",
+      "label": "DIY可",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2737",
+      "label": "IT重説 対応物件",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2738",
+      "label": "高齢者歓迎",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2739",
+      "label": "LGBTフレンドリー",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2740",
+      "label": "初期費用カード決済可",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2741",
+      "label": "家賃カード決済可",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2801",
+      "label": "エアコン",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2802",
+      "label": "エアコン2台",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2803",
+      "label": "エアコン3台",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2804",
+      "label": "エアコン4台",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2805",
+      "label": "エアコン全室",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2810",
+      "label": "家電付",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2815",
+      "label": "家具付",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2818",
+      "label": "灯油暖房",
+      "searchable": true,
+      "allowlist": false
+    },
+    {
+      "code": "2819",
+      "label": "ガス暖房",
+      "searchable": true,
+      "allowlist": false
+    }
+  ]
+}

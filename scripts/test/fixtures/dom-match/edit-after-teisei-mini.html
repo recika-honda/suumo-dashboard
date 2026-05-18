@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head><title>新規物件登録</title></head>
+<body>
+<!--
+  Minimal edit-after-teisei.html fixture.
+  Contains L-prefixed label elements for buildCodeLabelMaps:
+    L0305 → 最上階
+    L0517 → 宅配ボックス
+    L1001 → 南向き   (used as multi-source code in evidence tests)
+    L1201 → オートロック
+    L1211 → 防犯カメラ  (used for negation tests)
+    L0816 → 駐輪場      (used in Fixture A/B tests)
+    L0207 → バイク置場  (used in Fixture C tests)
+  Note: duplication of a label (two codes → same label) is tested via L9991/L9992.
+-->
+<div id="L0305">最上階</div>
+<div id="L0517">宅配ボックス</div>
+<div id="L1001">南向き</div>
+<div id="L1201">オートロック</div>
+<div id="L1211">防犯カメラ</div>
+<div id="L0816">駐輪場</div>
+<div id="L0207">バイク置場</div>
+<!-- duplicate label for multi-code test -->
+<div id="L9991">テスト重複ラベル</div>
+<div id="L9992">テスト重複ラベル</div>
+</body>
+</html>

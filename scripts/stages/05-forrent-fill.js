@@ -26,6 +26,10 @@ const STAGE = "05-forrent-fill";
  * @param {Array<object>} opts.processedImages
  * @param {object | null} opts.initialCostData
  * @param {{ catchCopy: string, freeComment: string }} opts.texts
+ * @param {object | null} [opts.featureCodes]   - Stage 03b output (Phase β T004).
+ *   { checkedCodes: string[], evidence: object } — passed through to fillTokucho.
+ *   When null/undefined, fillTokucho falls back to inline SSOT resolution
+ *   (legacy compatibility for callers not yet wired through 03b).
  * @param {(name: string, extra?: object) => void} opts.logStep
  * @returns {Promise<
  *   | { status: "OK", forrentPage, mainFrame, filled, uploaded, transport, shuhen, allErrors }
@@ -38,6 +42,7 @@ async function runForrentFill({
   processedImages,
   initialCostData,
   texts,
+  featureCodes,
   logStep,
   runDir,
 }) {
@@ -46,6 +51,7 @@ async function runForrentFill({
     processedImagesCount: processedImages?.length ?? 0,
     hasInitialCostData: !!initialCostData,
     texts,
+    featureCodesCount: featureCodes?.checkedCodes?.length ?? 0,
   });
   console.error("  [5/6] forrent.jp入稿...");
   const forrentPage = await context.newPage();
@@ -87,8 +93,14 @@ async function runForrentFill({
     mainFrame,
     processedImages
   );
-  logStep("fill_tokucho_start");
-  const tokuchoResult = await forrent.fillTokucho(mainFrame, reinsData);
+  logStep("fill_tokucho_start", {
+    featureCodesCount: featureCodes?.checkedCodes?.length ?? null,
+    source: featureCodes ? "stage-03b" : "inline-fallback",
+  });
+  const tokuchoResult = await forrent.fillTokucho(mainFrame, reinsData, {
+    checkedCodes: featureCodes?.checkedCodes,
+    evidence: featureCodes?.evidence,
+  });
   logStep("fill_transport_start");
   const transportResult = await forrent.fillTransportViaMap(
     forrentPage,

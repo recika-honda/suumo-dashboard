@@ -152,9 +152,58 @@ async function searchByNumber(page, reinsId) {
   return hasResults;
 }
 
+// ── Extract zmnFlmi (maisoku PDF filename) from getInitData JSON tree ──
+// Phase ε T020 (2026-05-16): the API response JSON has been observed at
+// {top}.zmnFlmi / {top}.data.zmnFlmi / {top}.result.zmnFlmi. As a defensive
+// fallback we also walk the whole tree (rare deeper nesting in some legacy
+// responses). Pattern reused verbatim from
+// scripts/sample-maisoku-and-zmnflmi.js#extractZmnFlmi (proven in Phase α).
+function extractZmnFlmiFromInitData(json) {
+  if (!json || typeof json !== "object") return "";
+  const direct = json.zmnFlmi || json?.data?.zmnFlmi || json?.result?.zmnFlmi;
+  if (typeof direct === "string") return direct;
+  let found = "";
+  (function walk(o) {
+    if (found || !o || typeof o !== "object") return;
+    for (const [k, v] of Object.entries(o)) {
+      if (found) return;
+      if (k === "zmnFlmi" && typeof v === "string") { found = v; return; }
+      if (typeof v === "object") walk(v);
+    }
+  })(json);
+  return found || "";
+}
+
 // ── Extract All Property Data ──────────────────────────────
 async function extractPropertyData(page) {
-  // Click detail button
+  // Phase ε T020 (2026-05-16): install API intercept BEFORE the detail click
+  // because the click is what triggers the /BK/GBK003200/getInitData XHR. The
+  // root cause logged in T010 was that zmnFlmi (マイソク PDF filename) is only
+  // present in this API response JSON and never appears in document.body
+  // .innerText — so the existing regex extractor below cannot reach it.
+  //
+  // We use the single-use waitForResponse() (not page.on("response")) so the
+  // listener auto-cleans up after fulfillment and does not leak across
+  // properties in the batch run. The Promise is created here, the click
+  // triggers the request, and we await the captured response just before
+  // returning data so zmnFlmi can be merged synchronously into the result.
+  //
+  // Filter scope is /BK/GBK003200/getInitData — bare /getInitData also matches
+  // the dashboard menu API (Phase α T001 bug; see also gotchas/maisoku-vs
+  // -madori comment), so this scoped regex is required.
+  //
+  // Graceful fallback: any failure path (timeout, JSON parse error, missing
+  // field) yields zmnFlmi: null. This is the contract 02b already expects
+  // (isZmnFlmiPresent(null) → false → skip). Existing 30+ field extraction
+  // is unaffected — we only ADD one key to the returned object.
+  const initDataPromise = page
+    .waitForResponse(
+      (r) => /\/BK\/GBK003200\/getInitData/.test(r.url()) && r.status() === 200,
+      { timeout: 15000 }
+    )
+    .catch(() => null);
+
+  // Click detail button — this triggers the getInitData XHR captured above.
   await page.click(REINS_SELECTORS.result.detailBtn);
   await page.waitForTimeout(5000);
 
@@ -321,6 +370,25 @@ async function extractPropertyData(page) {
 
     return result;
   });
+
+  // Phase ε T020: merge zmnFlmi from the previously-installed API intercept.
+  // Race: the click above already triggered the XHR; by the time evaluate()
+  // resolves (after waitForTimeout(5000) + DOM parse), the response is almost
+  // always already buffered. The await below resolves immediately in that
+  // case. If timeout/error: initDataPromise resolved to null → zmnFlmi: null
+  // (graceful fallback — 02b will skip as designed).
+  try {
+    const initResp = await initDataPromise;
+    if (initResp) {
+      const json = await initResp.json().catch(() => null);
+      const z = extractZmnFlmiFromInitData(json);
+      data.zmnFlmi = z || null;
+    } else {
+      data.zmnFlmi = null;
+    }
+  } catch {
+    data.zmnFlmi = null;
+  }
 
   return data;
 }
@@ -585,4 +653,7 @@ module.exports = {
   extractImageData,
   screenshotAllImages,
   screenshotImagePopup,
+  // Phase ε T020: exported for unit testing the pure JSON-walk helper without
+  // spinning up a real REINS browser. Not part of the production call graph.
+  extractZmnFlmiFromInitData,
 };

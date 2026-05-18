@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node api-server.js",
     "dev": "node api-server.js",
-    "test": "node scripts/test/test-sanitize-for-length.js && node scripts/test/test-spec-validator.js && node scripts/test/test-run-inspect.js && node scripts/test/test-validate.js && node scripts/test/test-notion-feedback.js && node scripts/test/test-image-fallback.js && node scripts/test/test-score-escalation.js && node scripts/test/test-pipeline-statuses.js && node scripts/test/test-image-cascade.js && node scripts/test/test-to-full-width.js && node scripts/test/test-sanitize-for-forrent-text.js"
+    "test": "node scripts/test/test-sanitize-for-length.js && node scripts/test/test-spec-validator.js && node scripts/test/test-run-inspect.js && node scripts/test/test-validate.js && node scripts/test/test-notion-feedback.js && node scripts/test/test-image-fallback.js && node scripts/test/test-score-escalation.js && node scripts/test/test-pipeline-statuses.js && node scripts/test/test-image-cascade.js && node scripts/test/test-to-full-width.js && node scripts/test/test-sanitize-for-forrent-text.js && node scripts/test/test-extract-feature-codes.js && node scripts/test/test-feature-codes-resolve.js && node scripts/test/test-stage-03b.js && node scripts/test/test-fill-tokucho-shrink.js && node scripts/test/test-stage-02b.js && node scripts/test/test-stage-02c.js && node scripts/test/test-negation-filter.js && node scripts/test/test-reins-zmnflmi-intercept.js && node scripts/test/test-score-extract.js && node scripts/test/test-dom-match.js && node scripts/test/test-zeta-collector.js && node scripts/test/test-capacity-fallback-message.js && node scripts/test/test-capacity-fallback-detection.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.77.0",

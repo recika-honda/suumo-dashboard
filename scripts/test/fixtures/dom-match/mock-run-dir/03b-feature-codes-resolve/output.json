@@ -1,0 +1,7 @@
+{
+  "checkedCodes": ["0305", "1201"],
+  "evidence": {
+    "0305": [{ "source": "maisoku", "reason": "label match", "matched": "最上階" }],
+    "1201": [{ "source": "setsubi", "reason": "keyword match", "matched": "オートロック" }]
+  }
+}

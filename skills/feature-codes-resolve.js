@@ -503,7 +503,7 @@ function collectSetsubiCandidates(reinsData) {
  * @param {string|null} [opts.maisokuText]   - null until Phase γ-δ; placeholder in Phase β
  * @returns {ResolveFeatureCodesResult}
  */
-function resolveFeatureCodes({ reinsData, featureCodesConfig, maisokuText = null }) {
+function resolveFeatureCodes({ reinsData, featureCodesConfig, maisokuText = null, maisokuLlmCodes = null }) {
   if (!reinsData || typeof reinsData !== "object") {
     throw new TypeError("resolveFeatureCodes: reinsData must be an object");
   }
@@ -559,8 +559,31 @@ function resolveFeatureCodes({ reinsData, featureCodesConfig, maisokuText = null
   //
   // When `maisokuText` is null / empty / non-string, this block is a no-op
   // and the output is bitwise identical to the Phase β three-path Set.
+  // Path E: maisoku LLM resolution (replaces Path D when present).
+  //
+  // `maisokuLlmCodes` is the validated output of
+  // skills/maisoku-llm.js#resolveMaisokuCodesLlm — the model judges feature
+  // applicability from the rendered maisoku image, so wording variants
+  // (浴室乾燥 vs 浴室乾燥機) and checkbox states are handled there. Codes are
+  // re-filtered against the SSOT allowlist here as defence in depth. When the
+  // LLM path did not run or errored (null), Path D keyword matching below is
+  // the graceful fallback — output is then bitwise identical to Phase delta.
+  let maisokuLlmRouteFired = false;
+  if (Array.isArray(maisokuLlmCodes)) {
+    for (const item of maisokuLlmCodes) {
+      const code = item && typeof item.code === "string" ? item.code : null;
+      if (!code || !allowedCodes.has(code)) continue;
+      maisokuLlmRouteFired = true;
+      addEvidence(code, {
+        source: "maisoku-llm",
+        reason: "LLM judged applicable from maisoku image",
+        evidence: typeof item.evidence === "string" ? item.evidence : "",
+      });
+    }
+  }
+
   let maisokuRouteFired = false;
-  if (typeof maisokuText === "string" && maisokuText.length > 0) {
+  if (!Array.isArray(maisokuLlmCodes) && typeof maisokuText === "string" && maisokuText.length > 0) {
     const normText = norm(maisokuText);
     if (normText.length > 0) {
       for (const entry of featureCodesConfig.codes) {
@@ -596,6 +619,9 @@ function resolveFeatureCodes({ reinsData, featureCodesConfig, maisokuText = null
     // Informative: the actual file read is owned by the 03b stage (T004);
     // this path is the conventional location it writes to.
     source_files.push("02c-maisoku-text-extract/output.json");
+  }
+  if (maisokuLlmRouteFired) {
+    source_files.push("02b-maisoku-fetch/output.json (via maisoku-llm)");
   }
 
   return {

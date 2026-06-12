@@ -26,10 +26,12 @@
 const path = require("path");
 const fs = require("fs");
 const { resolveFeatureCodes } = require("../../skills/feature-codes-resolve");
+const { resolveMaisokuCodesLlm } = require("../../skills/maisoku-llm");
 const { writeStageInput, writeStageOutput, readStageOutput } = require("../lib/artifact");
 
 const STAGE = "03b-feature-codes-resolve";
 const MAISOKU_STAGE = "02c-maisoku-text-extract";
+const MAISOKU_FETCH_STAGE = "02b-maisoku-fetch";
 
 // Lazy-load the 150-code SSOT once per process. fs read (not require) so a
 // missing file degrades to {codes: []} instead of crashing module load.
@@ -88,6 +90,20 @@ function resolveMaisokuTextForResolver({ callerArg, runDir }) {
  * @param {string}  [opts.runDir]
  * @returns {Promise<{ checkedCodes: string[], evidence: object, generated_at: string, source_files: string[] }>}
  */
+/**
+ * Resolve the maisoku PDF path from the 02b artifact for the LLM path.
+ * Returns null (LLM path skipped, Path D fallback) when the env switch is
+ * off, the run dir is absent, or 02b did not download a PDF.
+ */
+function resolveMaisokuPdfPathForLlm(runDir) {
+  if (process.env.MAISOKU_LLM_RESOLVE === "0") return { pdfPath: null, status: "disabled_by_env" };
+  if (!runDir) return { pdfPath: null, status: "skipped:no_rundir" };
+  const out = readStageOutput(runDir, MAISOKU_FETCH_STAGE);
+  const pdfPath = out && typeof out.maisokuPdfPath === "string" ? out.maisokuPdfPath : null;
+  if (!pdfPath || !fs.existsSync(pdfPath)) return { pdfPath: null, status: "skipped:no_pdf" };
+  return { pdfPath, status: "available" };
+}
+
 async function runFeatureCodesResolve({ reinsData, maisokuText = null, logStep, runDir }) {
   const log = typeof logStep === "function" ? logStep : () => {};
   const resolved = resolveMaisokuTextForResolver({ callerArg: maisokuText, runDir });
@@ -109,16 +125,42 @@ async function runFeatureCodesResolve({ reinsData, maisokuText = null, logStep, 
   });
 
   const featureCodesConfig = loadFeatureCodesConfig();
+
+  // LLM resolution of the maisoku image (Path E). Non-blocking: on any
+  // failure llm.codes is null and resolveFeatureCodes falls back to the
+  // Path D keyword matching over `resolved.text`. No new logStep event
+  // NAMES (Phase beta contract test pins the start/done sequence) — LLM
+  // observability rides in the `feature_codes_resolve_done` payload.
+  const llmPdf = resolveMaisokuPdfPathForLlm(runDir);
+  let llm = { status: llmPdf.status, codes: null, costUSD: 0, model: null };
+  if (llmPdf.pdfPath) {
+    console.error("  [3b/6] マイソク LLM 判定...");
+    llm = await resolveMaisokuCodesLlm({
+      maisokuPdfPath: llmPdf.pdfPath,
+      featureCodesConfig,
+      maisokuText: resolved.text,
+    });
+    if (llm.status === "ok") {
+      console.error(`  ✓ maisoku-llm: ${llm.codes.length} codes (model=${llm.model})`);
+    } else {
+      console.error(`  maisoku-llm ${llm.status}${llm.error ? `: ${llm.error}` : ""} → keyword fallback`);
+    }
+  }
+
   const result = resolveFeatureCodes({
     reinsData,
     featureCodesConfig,
     maisokuText: resolved.text,
+    maisokuLlmCodes: llm.status === "ok" ? llm.codes : null,
   });
 
   console.error(`  特徴コード: ${result.checkedCodes.length}件確定`);
   log("feature_codes_resolve_done", {
     checkedCount: result.checkedCodes.length,
     evidenceCodes: Object.keys(result.evidence).length,
+    maisokuLlmStatus: llm.status,
+    maisokuLlmCodeCount: Array.isArray(llm.codes) ? llm.codes.length : 0,
+    maisokuLlmCostUSD: llm.costUSD,
   });
 
   writeStageOutput(runDir, STAGE, result);

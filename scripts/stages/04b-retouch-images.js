@@ -5,17 +5,20 @@
  * Insertion point: between stage 04 (texts-generate) and stage 05 (forrent-fill).
  *
  * 設計 SSOT: docs/refactor/retouch-stage-design.md (T001)
- * 純粋ロジック: skills/retouch.js (T002) — classifyImageKind / pickGamma /
- *              buildGrayWorldGains / buildMagickOps / buildUpscaleArgs。
- *              本 stage の責務は I/O (metrics 計測 / spawn / fs) のみ。
+ * 純粋ロジック: skills/retouch.js — classifyImageKind / pickGamma / buildGrayWorldGains /
+ *              buildChannelLut / saturationMultiplier / buildResizePlan / computePixelStats /
+ *              buildUpscaleArgs。本 stage の責務は I/O (sharp 計測/加工 / realesrgan spawn / fs) のみ。
+ *
+ * 加工エンジン: sharp (既存パイプライン image-ai.js と同じ。本番機に magick が無いため
+ *   2026-06-18 に magick CLI → sharp へ切替)。明るさ(ガンマ)は per-channel LUT で magick と数値一致。
  *
  * 失敗時セマンティクス (design §5):
  *  - 1 画像の retouch が失敗したら、その img.localPath は stage 03 の出力 (原本) のまま通す。
  *    配列は短くならない。batch は落とさない。
- *  - realesrgan が無い / 失敗したら upscale を skip し magick のみ実行 (graceful)。
- *  - magick が失敗したら原本 localPath のまま (当該画像のみ skip)。
+ *  - realesrgan が無い / 失敗したら upscale を skip し sharp tonal のみ実行 (graceful)。
+ *  - sharp 加工が失敗したら原本 localPath のまま (当該画像のみ skip)。
  *
- * child_process は execFile を使う (shell 経由しない = path に空白/特殊文字があっても安全)。
+ * Real-ESRGAN 呼び出しのみ child_process (execFile, shell 非経由)。
  */
 
 const { execFile } = require("child_process");
@@ -23,12 +26,16 @@ const { promisify } = require("util");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const sharp = require("sharp");
 
 const {
   classifyImageKind,
   pickGamma,
   buildGrayWorldGains,
-  buildMagickOps,
+  buildChannelLut,
+  saturationMultiplier,
+  buildResizePlan,
+  computePixelStats,
   buildUpscaleArgs,
 } = require("../../skills/retouch");
 const { writeStageInput, writeStageOutput } = require("../lib/artifact");
@@ -40,7 +47,8 @@ const STAGE = "04b-retouch-images";
 // Output target dimensions (kento 合意 2026-06-18: 全画像 1280x960、写真=cover、間取り図=contain pad)。
 const TARGET_W = 1280;
 const TARGET_H = 960;
-const SAT_BOOST = 5; // saturation +5% (shell SAT_BOOST=105 と等価)
+const SAT_BOOST = 5; // saturation +5% (shell SAT_BOOST=105 / magick -modulate 100,105,100 と等価)
+const QUALITY = 92;
 const UPSCALE_MODEL = "realesrgan-x4plus";
 
 /**
@@ -89,61 +97,77 @@ function resolveRealesrgan() {
 }
 
 /**
- * magick で 1 画像の metrics を計測する (shell の magick -format '%[fx:...]' 相当)。
- * 返り値は全て 0-100% スケール、または 0-255 のチャンネル平均。
+ * sharp で 1 画像の metrics を計測する。
+ *   brightnessPct / per-channel 平均 → adaptive gamma + gray-world WB の入力
+ *   whitePct / satPct (縮小 raw から) → 間取り図 pixel-fallback 判定の入力
  *
  * @param {string} imgPath
- * @returns {Promise<{ whitePct: number, satPct: number, brightnessPct: number,
- *                      rMean: number, gMean: number, bMean: number }>}
+ * @returns {Promise<{ whitePct:number, satPct:number, brightnessPct:number,
+ *                      rMean:number, gMean:number, bMean:number }>}
  */
 async function measureImage(imgPath) {
-  // white% (99% 閾値での平均) — 間取り図判定の主要 signal
-  const whiteOut = await execFileAsync("magick", [
-    imgPath,
-    "-threshold",
-    "99%",
-    "-format",
-    "%[fx:mean*100]",
-    "info:",
-  ]);
-  // saturation% (HSL の S チャンネル平均)
-  const satOut = await execFileAsync("magick", [
-    imgPath,
-    "-colorspace",
-    "HSL",
-    "-channel",
-    "G",
-    "-separate",
-    "-format",
-    "%[fx:mean*100]",
-    "info:",
-  ]);
-  // brightness% (Gray 平均) — adaptive gamma の入力
-  const brightOut = await execFileAsync("magick", [
-    imgPath,
-    "-colorspace",
-    "Gray",
-    "-format",
-    "%[fx:mean*100]",
-    "info:",
-  ]);
-  // per-channel 平均 (0-255) — gray-world WB の入力
-  const chanOut = await execFileAsync("magick", [
-    imgPath,
-    "-format",
-    "%[fx:mean.r*255] %[fx:mean.g*255] %[fx:mean.b*255]",
-    "info:",
-  ]);
-  const [rMean, gMean, bMean] = chanOut.stdout.trim().split(/\s+/).map(Number);
+  const stats = await sharp(imgPath).stats();
+  const ch = stats.channels;
+  const rMean = ch[0].mean;
+  const gMean = ch[1].mean;
+  const bMean = ch[2].mean;
+  const brightnessPct = ((rMean + gMean + bMean) / 3 / 255) * 100;
 
-  return {
-    whitePct: Number(whiteOut.stdout.trim()),
-    satPct: Number(satOut.stdout.trim()),
-    brightnessPct: Number(brightOut.stdout.trim()),
-    rMean,
-    gMean,
-    bMean,
-  };
+  // 縮小 raw で white率 / 彩度を計算 (pixel-fallback 用、categoryId 優先なので副次)
+  const { data, info } = await sharp(imgPath)
+    .removeAlpha()
+    .resize(160, 160, { fit: "inside" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const { whitePct, satPct } = computePixelStats(data, info.channels);
+
+  return { whitePct, satPct, brightnessPct, rMean, gMean, bMean };
+}
+
+/**
+ * sharp で 1 画像を加工して outputPath へ書く。
+ *   photo     → WB+gamma を per-channel LUT で適用 → 彩度 → cover crop → JPEG
+ *   floorplan → AI/tonal なし、contain (白 pad) → JPEG
+ *
+ * @param {string} srcPath  入力 (写真は upscale 済 PNG or 原本、間取り図は原本)
+ * @param {string} outputPath
+ * @param {"floorplan"|"photo"} kind
+ * @param {{gr:number,gg:number,gb:number}} gains
+ * @param {string} gamma
+ */
+async function retouchToFile(srcPath, outputPath, kind, gains, gamma) {
+  const resizePlan = buildResizePlan(kind, TARGET_W, TARGET_H);
+
+  if (kind === "floorplan") {
+    await sharp(srcPath)
+      .resize(resizePlan)
+      .jpeg({ quality: QUALITY })
+      .toFile(outputPath);
+    return;
+  }
+
+  // photo: WB+gamma LUT → saturation → cover resize
+  const lutR = buildChannelLut(gains.gr, gamma);
+  const lutG = buildChannelLut(gains.gg, gamma);
+  const lutB = buildChannelLut(gains.gb, gamma);
+
+  const { data, info } = await sharp(srcPath)
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const c = info.channels; // 3 after removeAlpha
+  const out = Buffer.allocUnsafe(data.length);
+  for (let i = 0; i < data.length; i += c) {
+    out[i] = lutR[data[i]];
+    out[i + 1] = lutG[data[i + 1]];
+    out[i + 2] = lutB[data[i + 2]];
+  }
+
+  await sharp(out, { raw: { width: info.width, height: info.height, channels: c } })
+    .modulate({ saturation: saturationMultiplier(SAT_BOOST) })
+    .resize(resizePlan)
+    .jpeg({ quality: QUALITY })
+    .toFile(outputPath);
 }
 
 /**
@@ -171,7 +195,7 @@ async function runRetouchImages({ processedImages, downloadDir, logStep, runDir 
 
   const { bin: realesrganBin, models: realesrganModels } = resolveRealesrgan();
   if (!realesrganBin) {
-    console.error("  [04b] Real-ESRGAN 未検出 → upscale skip、magick のみで処理");
+    console.error("  [04b] Real-ESRGAN 未検出 → upscale skip、sharp tonal のみで処理");
   }
   log("retouch_start", {
     count: images.length,
@@ -192,7 +216,7 @@ async function runRetouchImages({ processedImages, downloadDir, logStep, runDir 
     }
 
     try {
-      // 1. metrics 計測
+      // 1. metrics 計測 (原本に対して)
       const m = await measureImage(inputPath);
 
       // 2. floorplan / photo 判定 (categoryId==="04" 優先、pixel heuristic は副判定)
@@ -204,7 +228,7 @@ async function runRetouchImages({ processedImages, downloadDir, logStep, runDir 
       const base = path.basename(inputPath).replace(/\.[^.]+$/, "");
       const outputPath = path.join(retouchDir, `${base}.jpg`);
 
-      let magickSource = inputPath;
+      let tonalSource = inputPath;
       let tmpUpscaled = null;
 
       // 3. 写真は Real-ESRGAN 4x upscale (失敗 / binary 不在なら原本 fallback)
@@ -222,9 +246,8 @@ async function runRetouchImages({ processedImages, downloadDir, logStep, runDir 
         try {
           await execFileAsync(realesrganBin, upArgs);
           if (fs.existsSync(tmpUpscaled) && fs.statSync(tmpUpscaled).size > 0) {
-            magickSource = tmpUpscaled; // upscale 成功 → これを magick 入力に
+            tonalSource = tmpUpscaled; // upscale 成功 → これを tonal 入力に
           } else {
-            // 空出力 = 失敗扱い、原本へ fallback
             safeUnlink(tmpUpscaled);
             tmpUpscaled = null;
           }
@@ -238,21 +261,16 @@ async function runRetouchImages({ processedImages, downloadDir, logStep, runDir 
         }
       }
 
-      // 4. magick ops を組み立て (photo=WB+gamma+sat+cover / floorplan=white-pad contain)
+      // 4. tonal パラメータ (photo のみ。floorplan は WB/gamma なし)
       let gains = { gr: 1, gg: 1, gb: 1 };
       let gamma = "1.0";
       if (kind === "photo") {
         gains = buildGrayWorldGains(m.rMean, m.gMean, m.bMean);
         gamma = pickGamma(m.brightnessPct);
       }
-      const ops = buildMagickOps(kind, gains, gamma, {
-        targetW: TARGET_W,
-        targetH: TARGET_H,
-        satBoost: SAT_BOOST,
-      });
 
-      // 5. magick 実行: [input, ...ops, output]
-      await execFileAsync("magick", [magickSource, ...ops, outputPath]);
+      // 5. sharp で加工 → outputPath
+      await retouchToFile(tonalSource, outputPath, kind, gains, gamma);
       safeUnlink(tmpUpscaled); // upscale 中間 PNG を掃除
 
       if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
@@ -297,4 +315,4 @@ function safeUnlink(p) {
   }
 }
 
-module.exports = { runRetouchImages, resolveRealesrgan, measureImage };
+module.exports = { runRetouchImages, resolveRealesrgan, measureImage, retouchToFile };

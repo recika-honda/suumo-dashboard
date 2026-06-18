@@ -4,20 +4,17 @@
  * 元ロジック: kento 承認済の手元スクリプト ~/Desktop/suumo-nyuko/retouch-listing-images.sh
  * 設計 SSOT:   docs/refactor/retouch-stage-design.md (T001)
  *
- * これらは全て pure function。I/O / 副作用なし (fs / child_process を require しない)。
- * magick / realesrgan の引数配列・WB ゲイン・gamma 値を「組み立てて返す」だけで、
- * 実 spawn は呼び出し側 (T003 stage) の責務。
+ * これらは全て pure function。I/O / 副作用なし (fs / child_process / sharp を require しない)。
+ * 値・LUT・sharp resize plan・realesrgan 引数を「組み立てて返す」だけで、
+ * 実 spawn / sharp 実行は呼び出し側 (stage 04b) の責務。
  *
- * 寸法非依存: buildMagickOps は targetW / targetH を引数で受ける
- * (kento 合意 2026-06-18: 全画像 1280x960、写真=cover、間取り図=contain white-pad)。
+ * 加工エンジン: ImageMagick CLI ではなく sharp (既存パイプラインと同じ。本番機に magick が無く
+ *   brew が別ユーザ所有で入れられないため、2026-06-18 に magick → sharp へ切替)。
+ *   sharp の .gamma() は magick -gamma と挙動が異なるため、明るさ(ガンマ)は per-channel LUT
+ *   (WB ゲイン × ガンマを畳んだ 256 段変換表) で magick と数値一致させる。
  *
- * Signature 補足 (T001 doc との差分):
- *  - kind の値は "floorplan" / "photo" (T001 doc の floor_plan 表記でなく、
- *    stage 03 と一貫させた検証契約に合わせる)。
- *  - buildMagickOps は寸法を 4 引数目 opts で受ける (T001 doc はハードコード版)。
- *    寸法を後段 stage から渡せるよう引数化する kento 合意 (2026-06-18) を優先。
- *  - buildUpscaleArgs は modelsDir を渡し、-m <modelsDir> を引数に含める
- *    (元 shell の realesrgan 呼び出しに合わせる)。
+ * 寸法は呼び出し側から targetW / targetH を渡す
+ * (kento 合意 2026-06-18: 全画像 1280x960、写真=cover、間取り図=contain white-pad、JPEG Q92)。
  */
 
 /**
@@ -57,7 +54,7 @@ function classifyImageKind(img, pixelStats = null) {
  *   else → "1.06"
  *
  * @param {number} brightnessPct  明るさ [0, 100]
- * @returns {string}              gamma 指数 (magick -gamma にそのまま渡せる文字列)
+ * @returns {string}              gamma 指数 (buildChannelLut にそのまま渡せる)
  */
 function pickGamma(brightnessPct) {
   if (brightnessPct < 40) return "1.22";
@@ -89,64 +86,109 @@ function buildGrayWorldGains(rMean, gMean, bMean) {
 }
 
 /**
- * 1 画像分の ImageMagick 引数配列を組み立てる。
+ * 1 チャンネル分の 256 段ルックアップテーブルを作る。
+ * WB ゲイン (乗算) と adaptive gamma (べき乗カーブ) を 1 本の表に畳む。
  *
- * 返り値は spawn("magick", [inputPath, ...ops, outputPath]) の "...ops" 部分。
- * inputPath / outputPath は含めない (呼び出し側が前後に付ける)。
+ *   out = round( 255 * clamp01( (i/255) * gain ) ^ (1/gamma) )
  *
- * photo (in order):
- *   gray-world WB (-channel R/G/B -evaluate multiply <gain>)
- *   -gamma <gamma>
- *   -modulate 100,<100+satBoost>,100  (彩度ブースト)
- *   -resize <W>x<H>^ -gravity center -extent <W>x<H>  (cover)
- *   -quality 92
+ * これは magick の `-channel C -evaluate multiply gain` → `-gamma g` と数値等価
+ * (実測: reins_3 で magick -gamma1.14 と LUT で明るさ持ち上げ幅が一致)。
+ * sharp はこの表を画素バッファに per-channel 適用するだけで magick と同じ結果になる。
  *
- * floorplan:
- *   -resize <W>x<H> -background white -gravity center -extent <W>x<H>  (contain pad)
- *   -quality 92
+ * 不変条件: i=0 → 0、フル白 (clamp 後 1.0) → 255 (端点保存 = 白飛びさせない)。
+ * gain=1 かつ gamma=1 のとき恒等 (lut[i] === i)。
+ *
+ * @param {number} gain          チャンネルゲイン (gray-world WB)。1.0 で無補正
+ * @param {number|string} gamma  adaptive gamma 指数 (>1 で中間調を持ち上げ)
+ * @returns {Buffer}             長さ 256 の Uint8 変換表
+ */
+function buildChannelLut(gain, gamma) {
+  const g = typeof gamma === "string" ? parseFloat(gamma) : gamma;
+  const inv = 1 / g;
+  const lut = Buffer.alloc(256);
+  for (let i = 0; i < 256; i++) {
+    let v = (i / 255) * gain;
+    if (v > 1) v = 1;
+    else if (v < 0) v = 0;
+    lut[i] = Math.max(0, Math.min(255, Math.round(255 * Math.pow(v, inv))));
+  }
+  return lut;
+}
+
+/**
+ * 彩度ブースト量 (0-100 の delta) を sharp.modulate({saturation}) の倍率に変換。
+ *   satBoost=5 → 1.05 (= magick -modulate 100,105,100 と等価)。
+ *
+ * @param {number} satBoost  彩度の増分 [%], 既定 5
+ * @returns {number}         sharp saturation 倍率
+ */
+function saturationMultiplier(satBoost) {
+  const b = typeof satBoost === "number" ? satBoost : 5;
+  return 1 + b / 100;
+}
+
+/**
+ * sharp.resize() に渡すオプションを kind 別に組み立てる。
+ *   photo     → cover (中央 crop で 4:3 ぴったり)
+ *   floorplan → contain + 白 pad (線を切らない)
  *
  * @param {"floorplan" | "photo"} kind
- * @param {{ gr: number, gg: number, gb: number }} gains  gray-world ゲイン (floorplan では無視)
- * @param {string} gamma  adaptive gamma 指数 (floorplan では無視)
- * @param {{ targetW: number, targetH: number, satBoost?: number }} opts
- * @returns {string[]}  magick 引数配列 (input/output を除く)
+ * @param {number} targetW
+ * @param {number} targetH
+ * @returns {{ width:number, height:number, fit:string, position?:string, background?:object }}
  */
-function buildMagickOps(kind, gains, gamma, opts) {
-  const o = opts || {};
-  const W = o.targetW;
-  const H = o.targetH;
-  const dim = `${W}x${H}`;
-
+function buildResizePlan(kind, targetW, targetH) {
   if (kind === "floorplan") {
-    // contain (white pad) — アスペクト比を保ったまま白背景で枠合わせ
-    return [
-      "-resize", dim,
-      "-background", "white",
-      "-gravity", "center",
-      "-extent", dim,
-      "-quality", "92",
-    ];
+    return {
+      width: targetW,
+      height: targetH,
+      fit: "contain",
+      background: { r: 255, g: 255, b: 255 },
+    };
   }
+  return {
+    width: targetW,
+    height: targetH,
+    fit: "cover",
+    position: "centre",
+  };
+}
 
-  // photo: WB → gamma → 彩度 → cover crop
-  const satBoost = typeof o.satBoost === "number" ? o.satBoost : 5;
-  const g = gains || {};
-  return [
-    // gray-world white balance, per channel
-    "-channel", "R", "-evaluate", "multiply", String(g.gr),
-    "-channel", "G", "-evaluate", "multiply", String(g.gg),
-    "-channel", "B", "-evaluate", "multiply", String(g.gb),
-    "+channel",
-    // adaptive gamma
-    "-gamma", String(gamma),
-    // saturation boost (modulate brightness,saturation,hue)
-    "-modulate", `100,${100 + satBoost},100`,
-    // cover crop to target dimensions
-    "-resize", `${dim}^`,
-    "-gravity", "center",
-    "-extent", dim,
-    "-quality", "92",
-  ];
+/**
+ * raw RGB(A) バッファから white 率 (%) と HSL 彩度平均 (%) を計算する。
+ * 間取り図 pixel-fallback 判定の入力 (classifyImageKind の pixelStats)。
+ *
+ *   white = 全チャンネル >= 252 (≒99% 白) の画素割合
+ *   sat   = HSL S の画素平均 (magick の HSL S 平均と整合)
+ *
+ * @param {Buffer|Uint8Array} data  raw 画素 (channels バイト/画素)
+ * @param {number} channels         1 画素あたりバイト数 (3 or 4)
+ * @returns {{ whitePct:number, satPct:number }}
+ */
+function computePixelStats(data, channels) {
+  const ch = channels || 3;
+  const px = Math.floor(data.length / ch);
+  if (px === 0) return { whitePct: 0, satPct: 0 };
+  let whiteCount = 0;
+  let satSum = 0;
+  for (let p = 0; p < px; p++) {
+    const o = p * ch;
+    const r = data[o];
+    const g = data[o + 1];
+    const b = data[o + 2];
+    if (r >= 252 && g >= 252 && b >= 252) whiteCount++;
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    if (mx !== mn) {
+      const L = (mx + mn) / 2 / 255;
+      const d = (mx - mn) / 255;
+      satSum += d / (1 - Math.abs(2 * L - 1));
+    }
+  }
+  return {
+    whitePct: (whiteCount / px) * 100,
+    satPct: (satSum / px) * 100,
+  };
 }
 
 /**
@@ -173,6 +215,9 @@ module.exports = {
   classifyImageKind,
   pickGamma,
   buildGrayWorldGains,
-  buildMagickOps,
+  buildChannelLut,
+  saturationMultiplier,
+  buildResizePlan,
+  computePixelStats,
   buildUpscaleArgs,
 };

@@ -53,18 +53,16 @@ gh auth status   # kntkn アカウントでログイン済か
 > 過去、poppler の入れ忘れで maisoku 経路 (stage 02c) が新 mac で全停止し、smoke 1 件目で発覚した
 > (gotcha 2026-05-18)。同じ轍を踏まないよう、依存解決 (Phase 4) の前にここで必ず揃える。
 
-native binary は 3 つ。runtime (node/bun) でも node deps でもない第 3 の系統として扱う。
+native binary は 2 つ (poppler / Real-ESRGAN)。runtime (node/bun) でも node deps でもない第 3 の系統として扱う。
 
-#### (a) ImageMagick — `magick` (stage 04b 画像加工に必須)
+#### (a) 画像加工エンジンは sharp — **brew 不要 (node 依存)**
 
-```bash
-brew install imagemagick
-magick --version   # Version: ImageMagick 7.x が出れば OK
-```
-
-stage 04b (画像リタッチ) が `magick` を spawn してホワイトバランス / ガンマ補正 / リサイズを行う。
-未導入だと stage 04b の加工が全 image で失敗する (失敗時は stage 03 の元画像にフォールバックするので
-入稿自体は止まらないが、画質改善効果がゼロになる)。
+stage 04b の画像加工 (ホワイトバランス / ガンマ補正 / 彩度 / リサイズ) は ImageMagick CLI ではなく
+**sharp** (既存パイプライン image-ai.js と同じ node ライブラリ) で行う。sharp は `bun install` で入るため
+OS レベルの導入は不要。`brew install imagemagick` は **不要**
+(本番機で Homebrew が別ユーザ所有で `brew install` できない問題を構造的に回避するため、
+2026-06-18 に magick CLI → sharp へ切替。明るさのガンマ補正は per-channel LUT で magick と数値一致)。
+確認: `node -e "require('sharp'); console.log('sharp OK')"` (repo root で)。
 
 #### (b) poppler — `pdftotext` / `pdftoppm` (stage 02c maisoku OCR に必須)
 
@@ -101,8 +99,8 @@ xattr -dr com.apple.quarantine ~/dev/suumo-dashboard/tools/realesrgan
 ~/dev/suumo-dashboard/tools/realesrgan/realesrgan-ncnn-vulkan -h
 ```
 
-binary が見つからない場合、stage 04b は超解像を skip して ImageMagick 加工のみで続行する
-(元画像でも入稿は valid なので安全側に倒れる)。よって Real-ESRGAN は (a)(b) より優先度はやや低いが、
+binary が見つからない場合、stage 04b は超解像を skip して sharp の tonal 加工のみで続行する
+(元画像でも入稿は valid なので安全側に倒れる)。よって Real-ESRGAN は poppler より優先度はやや低いが、
 画質を最大化するなら導入する。
 
 #### binary / models のパス解決順 (T001 design doc と一致)
@@ -380,7 +378,8 @@ chmod -R a-w /Volumes/AgentSSD/04_FANGO/FNG26_AI入稿システム/code/suumo-da
 
 ## 参考: 移行物のチェックリスト
 
-- [ ] native binary 3 点導入済: `magick --version` / `pdftotext -v` / `realesrgan-ncnn-vulkan -h` が全て OK
+- [ ] 画像加工は sharp (node 依存、brew 不要): `node -e "require('sharp')"` が通る
+- [ ] native binary 2 点導入済: `pdftotext -v` / `realesrgan-ncnn-vulkan -h` が OK
 - [ ] Real-ESRGAN は `xattr -dr com.apple.quarantine` 済 + binary/models のパス (repo 同梱 or env) 確定
 - [ ] git clone 成功 (`refactor/cleanup-2026-05` ブランチ)
 - [ ] `.env.local` 17 行作成済

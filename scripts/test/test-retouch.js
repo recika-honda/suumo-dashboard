@@ -2,8 +2,8 @@
 /**
  * test-retouch.js — skills/retouch.js pure helper unit tests
  *
- * Covered functions: classifyImageKind, pickGamma, buildGrayWorldGains, buildMagickOps
- * (buildUpscaleArgs is a trivial array assembly — verified via presence check)
+ * Covered functions: classifyImageKind, pickGamma, buildGrayWorldGains, buildChannelLut,
+ * saturationMultiplier, buildResizePlan, computePixelStats, buildUpscaleArgs (presence check)
  *
  * All tests run without spawning magick / realesrgan or any I/O.
  * Target dimensions: 1280x960 (kento agreement 2026-06-18).
@@ -18,7 +18,10 @@ const {
   classifyImageKind,
   pickGamma,
   buildGrayWorldGains,
-  buildMagickOps,
+  buildChannelLut,
+  saturationMultiplier,
+  buildResizePlan,
+  computePixelStats,
   buildUpscaleArgs,
 } = require("../../skills/retouch");
 
@@ -164,79 +167,119 @@ console.log("\n== buildGrayWorldGains ==");
   assert("equal channels R=G=B=128 → gb=1.0", gains.gb, 1.0);
 }
 
-// ───── buildMagickOps ─────
-console.log("\n== buildMagickOps ==");
-
 const TARGET_W = 1280;
 const TARGET_H = 960;
-const DIM = "1280x960";
 
-const sampleGains = buildGrayWorldGains(120, 100, 80);
-const sampleGamma = "1.16";
+// ───── buildChannelLut ─────
+console.log("\n== buildChannelLut ==");
 
-// photo: cover crop → must contain resize with ^ and -extent
+// length is always 256
+assert("buildChannelLut: length 256", buildChannelLut(1, "1.0").length, 256);
+
+// identity: gain=1, gamma=1.0 → lut[i] === i (endpoints + midpoints)
 {
-  const ops = buildMagickOps("photo", sampleGains, sampleGamma, { targetW: TARGET_W, targetH: TARGET_H });
-  assertIncludes("photo ops: -resize with ^ (cover crop)", ops, `${DIM}^`);
-  assertIncludes("photo ops: -extent <dim>", ops, DIM);
-  assertIncludes("photo ops: -gamma", ops, "-gamma");
-  assertIncludes("photo ops: -quality 92", ops, "92");
-  // must NOT contain -background white (that's floorplan)
-  const noBg = !ops.includes("-background");
+  const lut = buildChannelLut(1, "1.0");
+  assert("identity lut[0]=0", lut[0], 0);
+  assert("identity lut[64]=64", lut[64], 64);
+  assert("identity lut[128]=128", lut[128], 128);
+  assert("identity lut[255]=255", lut[255], 255);
+}
+
+// gamma > 1 brightens midtones but preserves endpoints (no white blow-out)
+{
+  const lut = buildChannelLut(1, "1.14");
+  assert("gamma1.14 lut[0]=0 (black preserved)", lut[0], 0);
+  assert("gamma1.14 lut[255]=255 (white preserved — no blow-out)", lut[255], 255);
+  const midLifted = lut[128] > 128;
+  if (midLifted) {
+    pass++;
+    console.log("PASS: gamma1.14 lut[128] > 128 (midtone lifted)");
+  } else {
+    fail++;
+    failures.push({ test: "gamma1.14 midtone lift", expected: "> 128", got: lut[128] });
+    console.log(`FAIL: gamma1.14 midtone lift — got lut[128]=${lut[128]}`);
+  }
+}
+
+// gain < 1 darkens (WB pull-down), gamma=1.0
+{
+  const lut = buildChannelLut(0.8, "1.0");
+  assert("gain0.8 lut[255]=204 (255*0.8)", lut[255], 204);
+  assert("gain0.8 lut[128]=102", lut[128], Math.round(255 * ((128 / 255) * 0.8)));
+}
+
+// gain > 1 clamps at white (no overflow past 255)
+{
+  const lut = buildChannelLut(1.5, "1.0");
+  assert("gain1.5 lut[200] clamps to 255", lut[200], 255);
+}
+
+// ───── saturationMultiplier ─────
+console.log("\n== saturationMultiplier ==");
+
+assert("satBoost 5 → 1.05", saturationMultiplier(5), 1.05);
+assert("satBoost 10 → 1.1", saturationMultiplier(10), 1.1);
+assert("satBoost undefined → default 1.05", saturationMultiplier(undefined), 1.05);
+
+// ───── buildResizePlan ─────
+console.log("\n== buildResizePlan ==");
+
+{
+  const plan = buildResizePlan("photo", TARGET_W, TARGET_H);
+  assert("photo plan: fit cover", plan.fit, "cover");
+  assert("photo plan: width 1280", plan.width, TARGET_W);
+  assert("photo plan: height 960", plan.height, TARGET_H);
+  const noBg = plan.background === undefined;
   if (noBg) {
     pass++;
-    console.log("PASS: photo ops: no -background white");
+    console.log("PASS: photo plan: no background (cover crop, no pad)");
   } else {
     fail++;
-    failures.push({ test: "photo ops: no -background white", expected: "absent", got: ops });
-    console.log("FAIL: photo ops: no -background white");
-    console.log("  expected: -background to be absent");
-    console.log(`  got: ${JSON.stringify(ops)}`);
+    failures.push({ test: "photo plan no background", expected: "undefined", got: plan.background });
+    console.log("FAIL: photo plan: unexpected background");
   }
 }
 
-// floorplan: contain (white-pad) → -background white, no ^ resize
 {
-  const ops = buildMagickOps("floorplan", sampleGains, sampleGamma, { targetW: TARGET_W, targetH: TARGET_H });
-  assertIncludes("floorplan ops: -background white", ops, "-background");
-  assertIncludes("floorplan ops: white value", ops, "white");
-  assertIncludes("floorplan ops: -resize <dim> (no ^)", ops, DIM);
-  // ^ must NOT appear in floorplan (no cover crop)
-  const noHat = !ops.includes(`${DIM}^`);
-  if (noHat) {
-    pass++;
-    console.log("PASS: floorplan ops: no ^ in resize (contain, not cover)");
-  } else {
-    fail++;
-    failures.push({ test: "floorplan ops: no ^ in resize", expected: "absent", got: ops });
-    console.log("FAIL: floorplan ops: no ^ in resize");
-    console.log("  expected: no cover-resize ^");
-    console.log(`  got: ${JSON.stringify(ops)}`);
-  }
-  assertIncludes("floorplan ops: -gravity center", ops, "-gravity");
-  assertIncludes("floorplan ops: -extent <dim>", ops, DIM);
-  assertIncludes("floorplan ops: -quality 92", ops, "92");
+  const plan = buildResizePlan("floorplan", TARGET_W, TARGET_H);
+  assert("floorplan plan: fit contain", plan.fit, "contain");
+  assert("floorplan plan: white background", plan.background, { r: 255, g: 255, b: 255 });
+  assert("floorplan plan: width 1280", plan.width, TARGET_W);
+  assert("floorplan plan: height 960", plan.height, TARGET_H);
 }
 
-// photo with custom satBoost: modulate should use 100+satBoost
+// ───── computePixelStats ─────
+console.log("\n== computePixelStats ==");
+
 {
-  const satBoost = 10;
-  const ops = buildMagickOps("photo", sampleGains, sampleGamma, {
-    targetW: TARGET_W,
-    targetH: TARGET_H,
-    satBoost,
-  });
-  assertIncludes(
-    "photo ops: satBoost=10 → modulate 100,110,100",
-    ops,
-    "100,110,100"
-  );
+  // 3 pure-white pixels → whitePct 100, satPct 0
+  const white = Buffer.from([255, 255, 255, 255, 255, 255, 255, 255, 255]);
+  const s = computePixelStats(white, 3);
+  assert("all-white: whitePct 100", s.whitePct, 100);
+  assert("all-white: satPct 0", s.satPct, 0);
 }
 
-// photo default satBoost=5
 {
-  const ops = buildMagickOps("photo", sampleGains, sampleGamma, { targetW: TARGET_W, targetH: TARGET_H });
-  assertIncludes("photo ops: default satBoost=5 → modulate 100,105,100", ops, "100,105,100");
+  // mid-gray (mx==mn) → satPct 0, not white
+  const gray = Buffer.from([128, 128, 128, 128, 128, 128]);
+  const s = computePixelStats(gray, 3);
+  assert("mid-gray: whitePct 0", s.whitePct, 0);
+  assert("mid-gray: satPct 0", s.satPct, 0);
+}
+
+{
+  // pure red → HSL S = 1 → satPct 100, not white
+  const red = Buffer.from([255, 0, 0]);
+  const s = computePixelStats(red, 3);
+  assert("pure-red: satPct 100", s.satPct, 100);
+  assert("pure-red: whitePct 0", s.whitePct, 0);
+}
+
+{
+  // empty buffer → zeros, no throw
+  const s = computePixelStats(Buffer.alloc(0), 3);
+  assert("empty buffer: whitePct 0", s.whitePct, 0);
+  assert("empty buffer: satPct 0", s.satPct, 0);
 }
 
 // ───── buildUpscaleArgs (sanity) ─────

@@ -35,6 +35,7 @@ const { runMaisokuTextExtract } = require("./stages/02c-maisoku-text-extract");
 const { runImagesClassify } = require("./stages/03-images-classify");
 const { runFeatureCodesResolve } = require("./stages/03b-feature-codes-resolve");
 const { runTextsGenerate } = require("./stages/04-texts-generate");
+const { runRetouchImages } = require("./stages/04b-retouch-images");
 const { runForrentFill } = require("./stages/05-forrent-fill");
 const { runForrentRegister } = require("./stages/06-forrent-register");
 
@@ -269,12 +270,23 @@ async function processProperty(context, reinsPage, reinsId, index, total, runLog
 
   const texts = await runTextsGenerate({ reinsData, logStep, runDir });
 
+  // Stage 04b: local image retouch (WB / gamma / saturation / cover-crop +
+  // Real-ESRGAN upscale). Same-length, same-shape return: only successfully
+  // retouched entries get localPath replaced, so stage 05 fill is unaffected
+  // when retouch is skipped. env PHASE_RETOUCH=0 で stage 全体を skip (rollback)。
+  let r4b = null;
+  if (process.env.PHASE_RETOUCH !== "0") {
+    r4b = await runRetouchImages({
+      processedImages: r3.processedImages, downloadDir, logStep, runDir,
+    });
+  }
+
   // ── Step 5-6: try で覆い、例外は ERROR ラベル ──
   let r5;
   try {
     r5 = await runForrentFill({
       context, reinsData,
-      processedImages: r3.processedImages,
+      processedImages: (r4b && r4b.processedImages) || r3.processedImages,
       initialCostData: r3.initialCostData,
       texts,
       featureCodes: r3b,

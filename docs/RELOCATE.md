@@ -47,6 +47,86 @@ gh auth status   # kntkn アカウントでログイン済か
 
 未認証なら `gh auth login` で kntkn の GitHub にログイン。
 
+### 1.3 native binary 依存 (必須) — **package.json / bun.lock に出ないため最も抜けやすい**
+
+> **重要**: 以下 3 点は `bun install` では入らない。OS レベルの binary なので個別にインストールする。
+> 過去、poppler の入れ忘れで maisoku 経路 (stage 02c) が新 mac で全停止し、smoke 1 件目で発覚した
+> (gotcha 2026-05-18)。同じ轍を踏まないよう、依存解決 (Phase 4) の前にここで必ず揃える。
+
+native binary は 3 つ。runtime (node/bun) でも node deps でもない第 3 の系統として扱う。
+
+#### (a) ImageMagick — `magick` (stage 04b 画像加工に必須)
+
+```bash
+brew install imagemagick
+magick --version   # Version: ImageMagick 7.x が出れば OK
+```
+
+stage 04b (画像リタッチ) が `magick` を spawn してホワイトバランス / ガンマ補正 / リサイズを行う。
+未導入だと stage 04b の加工が全 image で失敗する (失敗時は stage 03 の元画像にフォールバックするので
+入稿自体は止まらないが、画質改善効果がゼロになる)。
+
+#### (b) poppler — `pdftotext` / `pdftoppm` (stage 02c maisoku OCR に必須)
+
+```bash
+brew install poppler
+pdftotext -v       # pdftotext version 24.x が出れば OK
+pdftoppm -v        # 同上
+```
+
+stage 02c (マイソク PDF テキスト抽出) が dual-mode で使う:
+primary = `pdftotext` で PDF 内テキストを直接抽出、fallback = `pdftoppm` で PDF→JPEG 変換してから
+Vision OCR。両 path とも poppler 依存なので、**未導入だと maisoku 経路が完全に死ぬ**
+(取りこぼし特徴コードの自動獲得がゼロになる)。RELOCATE.md の旧版で明記漏れだったため今回追記。
+
+#### (c) Real-ESRGAN — `realesrgan-ncnn-vulkan` binary + models (stage 04b 超解像に使用)
+
+Homebrew formula は無い。GitHub release から binary + models を手動配置する。
+
+```bash
+# 1. GitHub release から macOS 版 zip を取得 (実績: v0.2.5.0)
+#    https://github.com/xinntao/Real-ESRGAN/releases
+#    realesrgan-ncnn-vulkan-YYYYMMDD-macos.zip を DL
+
+# 2. 配置先を作って展開 (repo 内 tools/realesrgan/ を推奨)
+mkdir -p ~/dev/suumo-dashboard/tools/realesrgan
+cd ~/dev/suumo-dashboard/tools/realesrgan
+unzip ~/Downloads/realesrgan-ncnn-vulkan-*-macos.zip
+# 展開後: realesrgan-ncnn-vulkan (binary) + models/ (realesrgan-x4plus.bin/.param 等)
+
+# 3. Gatekeeper の quarantine 属性を外す (これをしないと「開発元を検証できません」で起動不可)
+xattr -dr com.apple.quarantine ~/dev/suumo-dashboard/tools/realesrgan
+
+# 4. 動作確認 (Apple Silicon は Metal/Vulkan 経由で GPU 動作)
+~/dev/suumo-dashboard/tools/realesrgan/realesrgan-ncnn-vulkan -h
+```
+
+binary が見つからない場合、stage 04b は超解像を skip して ImageMagick 加工のみで続行する
+(元画像でも入稿は valid なので安全側に倒れる)。よって Real-ESRGAN は (a)(b) より優先度はやや低いが、
+画質を最大化するなら導入する。
+
+#### binary / models のパス解決順 (T001 design doc と一致)
+
+stage 04b は以下の順でパスを解決する。明示指定したいときは env で上書きする
+(詳細は `docs/refactor/retouch-stage-design.md` §4):
+
+binary (`REALESRGAN_BIN`):
+
+1. `REALESRGAN_BIN` env (明示指定・最優先)
+2. repo 同梱 `tools/realesrgan/realesrgan-ncnn-vulkan`
+3. 開発機 fallback `~/Desktop/suumo-nyuko/_upscale-tool/realesrgan-ncnn-vulkan`
+
+models (`REALESRGAN_MODELS`):
+
+1. `REALESRGAN_MODELS` env (明示指定・最優先)
+2. repo 同梱 `tools/realesrgan/models/`
+3. 開発機 fallback `~/Desktop/suumo-nyuko/_upscale-tool/models/`
+
+> **園田PC (本番ホスト) の注意**: 園田PC は kento の `/Users/kentohonda/` ではない **別 macOS ユーザ**。
+> 上記 fallback (3) の `~/Desktop/...` は kento の開発機にしか無いため当てにできない。
+> 園田PC では binary / models を repo 同梱 (2) に置くか、`.env.local` の `REALESRGAN_BIN` /
+> `REALESRGAN_MODELS` で園田PC の実 `$HOME` 基準の絶対パスを明示する。Desktop ハードコードに依存しない。
+
 ## Phase 2: code を clone
 
 ```bash
@@ -91,6 +171,21 @@ IELOVEBB_PASSWORD=...
 POLL_INTERVAL_SEC=60
 PORT=3500
 ```
+
+stage 04b (画像リタッチ) 関連の env は任意。既定でオン動作するので、未設定でも動く。
+必要なときだけ追記する (値・解決順は T001 doc `docs/refactor/retouch-stage-design.md` §4 / §6 と一致):
+
+```
+# stage 04b — 既定オン。"0" で stage 04b を skip (即時 rollback)
+PHASE_RETOUCH=1
+# Real-ESRGAN binary / models のパス上書き (園田PC など repo 同梱を使わない場合のみ)
+# 解決順: env → repo 同梱 tools/realesrgan/ → 開発機 ~/Desktop fallback
+REALESRGAN_BIN=/絶対パス/realesrgan-ncnn-vulkan
+REALESRGAN_MODELS=/絶対パス/models
+```
+
+> 園田PC は別 macOS ユーザのため、`REALESRGAN_BIN` / `REALESRGAN_MODELS` を設定するなら
+> 園田PC の実 `$HOME` 基準の絶対パスにする (`/Users/kentohonda/...` のハードコードは使わない)。
 
 旧 mac で kento が値を読み上げるには (旧 mac で実行):
 
@@ -285,6 +380,8 @@ chmod -R a-w /Volumes/AgentSSD/04_FANGO/FNG26_AI入稿システム/code/suumo-da
 
 ## 参考: 移行物のチェックリスト
 
+- [ ] native binary 3 点導入済: `magick --version` / `pdftotext -v` / `realesrgan-ncnn-vulkan -h` が全て OK
+- [ ] Real-ESRGAN は `xattr -dr com.apple.quarantine` 済 + binary/models のパス (repo 同梱 or env) 確定
 - [ ] git clone 成功 (`refactor/cleanup-2026-05` ブランチ)
 - [ ] `.env.local` 17 行作成済
 - [ ] `bun install` 完了 + Playwright Chromium ダウンロード済

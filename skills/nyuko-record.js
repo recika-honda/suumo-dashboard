@@ -112,16 +112,23 @@ function buildRecordProps(reinsData, status, reinsId) {
   // 抽出ステータス
   setSelect("抽出ステータス", status, STATUS_OPTIONS);
 
-  // 現況
-  setSelect("現況", data.現況, GENKYO_OPTIONS);
+  // 現況: XPath 由来の値は許可値セット外があり得るため制限せず raw を書く。
+  // Notion は未知の select option を自動作成するので取りこぼさない。
+  setSelect("現況", data.現況);
 
-  // 入居可能時期: 入居年月 (あれば) と 入居時期 を結合して原文保存 + 構造化
-  const movingRaw = [data.入居年月, data.入居時期].filter(Boolean).join(" / ");
+  // 入居可能時期: XPath 由来の 年月(日付) と 旬(上旬/中旬/下旬) を一次ソースに、
+  // 区分(入居時期: 即時/相談/期日指定/予定) も含めて原文を保存する。
+  const movingRaw = [data.入居可能年月, data.入居可能時期, data.入居時期]
+    .filter(Boolean)
+    .join(" / ");
   setText("入居時期(原文)", movingRaw);
-  const timing = parseMoveInTiming(movingRaw);
-  setNum("入居可能_年", timing.年);
-  setNum("入居可能_月", timing.月);
-  setSelect("入居可能_時期", timing.時期, TIMING_OPTIONS);
+  const ym = parseMoveInTiming(data.入居可能年月 || movingRaw);
+  setNum("入居可能_年", ym.年);
+  setNum("入居可能_月", ym.月);
+  const jun = TIMING_OPTIONS.has(data.入居可能時期)
+    ? data.入居可能時期
+    : parseMoveInTiming(movingRaw).時期;
+  setSelect("入居可能_時期", jun, TIMING_OPTIONS);
 
   // 主要テキスト
   setText("物件種目", data.物件種目);

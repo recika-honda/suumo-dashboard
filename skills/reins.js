@@ -273,11 +273,8 @@ async function extractPropertyData(page) {
       駐車場在否: /駐車場在否\s*\n\s*(有|無|空有|空無)/,
       // 現況: 有効な値のみ
       現況: /現況\s*\n\s*(空室|空き|居住中|賃貸中|使用中|明渡予定|建築中)/,
-      // 入居時期: 即/相談/予定/日付パターンのみ
+      // 入居時期: 即/相談/予定/日付パターンの「区分」のみ (年月・旬は XPath で別取得)
       入居時期: /入居時期\s*\n\s*(即時?|即日?|相談|期日指定|予定|\d{4}年[^\n]*)/,
-      // 入居年月: 入居可能時期の年月(+上旬/下旬)を保持する別ラベル。
-      // 入居時期が「相談」「期日指定」でも年月が別途入っていれば拾う (additive)。
-      入居年月: /入居年月\s*\n\s*(\d{4}年[^\n]*)/,
       // 取引態様: 既知の値のみ
       取引態様: /取引態様\s*\n\s*(貸主|代理|仲介元付|仲介先物|一般|専任|媒介|仲介)/,
       配分割合客付: /配分割合客付\s*\n\s*([\d.]+)/,
@@ -370,6 +367,37 @@ async function extractPropertyData(page) {
         });
       }
     }
+
+    // ── XPath 直接取得: 現況 / 入居可能年月 / 入居可能時期(旬) ──
+    // innerText 正規表現は許可値セット依存で 現況 を取りこぼし、入居の年月・旬は
+    // そもそも取得不可だった。詳細画面の固定 XPath から value セルを直接読む。
+    // 値が取れない/レイアウト変化時は null となり、現況は regex 値に graceful fallback。
+    const xpathText = (xp) => {
+      try {
+        const node = document.evaluate(
+          xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
+        ).singleNodeValue;
+        const t = node && node.textContent ? node.textContent.trim() : "";
+        return t || null;
+      } catch {
+        return null;
+      }
+    };
+    const XP = {
+      現況: '//*[@id="__layout"]/div/div[1]/div[1]/div/div[14]/div/div/div/div[2]/div',
+      入居可能年月: '//*[@id="__layout"]/div/div[1]/div[1]/div/div[15]/div/div/div[2]/div[2]/div[1]',
+      入居可能時期: '//*[@id="__layout"]/div/div[1]/div[1]/div/div[15]/div/div/div[2]/div[2]/div[2]',
+    };
+    // 現況: XPath を一次ソース (短い値のみ採用)、無効なら regex 値を維持
+    const genkyoXp = xpathText(XP.現況);
+    if (genkyoXp && !genkyoXp.includes("\n") && genkyoXp.length <= 12) {
+      result.現況 = genkyoXp;
+    }
+    // 入居可能年月(日付) / 入居可能時期(上旬・中旬・下旬) は XPath が一次ソース
+    const nyukoYm = xpathText(XP.入居可能年月);
+    const nyukoJun = xpathText(XP.入居可能時期);
+    if (nyukoYm) result.入居可能年月 = nyukoYm;
+    if (nyukoJun) result.入居可能時期 = nyukoJun;
 
     return result;
   });

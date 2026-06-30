@@ -69,7 +69,8 @@ const SAMPLE = {
   物件種目: "マンション",
   現況: "空室",
   入居時期: "期日指定",
-  入居年月: "2026年9月上旬",
+  入居可能年月: "2026年9月",
+  入居可能時期: "上旬",
   賃料: "12.5万円",
   使用部分面積: "25.5㎡",
   間取タイプ: "ＬＤＫ",
@@ -92,19 +93,36 @@ check("buildRecordProps: 抽出ステータスは select", () => {
   assert.strictEqual(buildRecordProps(SAMPLE, "OK", "x")["抽出ステータス"].select.name, "OK");
   assert.strictEqual(buildRecordProps({}, "REG_FAIL", "x")["抽出ステータス"].select.name, "REG_FAIL");
 });
-check("buildRecordProps: 現況は許可値のみ select 化", () => {
+check("buildRecordProps: 現況は raw 値を select 化 (許可値外も保持)", () => {
   assert.strictEqual(buildRecordProps(SAMPLE, "OK", "x")["現況"].select.name, "空室");
-  // 許可外の値は現況プロパティを付けない
-  assert.ok(!("現況" in buildRecordProps({ 現況: "謎の状態" }, "OK", "x")));
+  // 許可値セット外 (XPath 由来) でも取りこぼさず書き込む
+  assert.strictEqual(buildRecordProps({ 現況: "空家" }, "OK", "x")["現況"].select.name, "空家");
+  // 空なら現況プロパティを付けない
+  assert.ok(!("現況" in buildRecordProps({}, "NOT_FOUND", "x")));
 });
-check("buildRecordProps: 入居可能時期を年/月/時期に分解", () => {
+check("buildRecordProps: 入居可能年月(日付)+入居可能時期(旬)を年/月/時期に分解", () => {
   const p = buildRecordProps(SAMPLE, "OK", "x");
   assert.strictEqual(p["入居可能_年"].number, 2026);
   assert.strictEqual(p["入居可能_月"].number, 9);
   assert.strictEqual(p["入居可能_時期"].select.name, "上旬");
-  // 原文は入居年月+入居時期を結合
-  assert.ok(p["入居時期(原文)"].rich_text[0].text.content.includes("2026年9月上旬"));
-  assert.ok(p["入居時期(原文)"].rich_text[0].text.content.includes("期日指定"));
+  // 原文は 入居可能年月 / 入居可能時期 / 入居時期(区分) を結合
+  const raw = p["入居時期(原文)"].rich_text[0].text.content;
+  assert.ok(raw.includes("2026年9月"));
+  assert.ok(raw.includes("上旬"));
+  assert.ok(raw.includes("期日指定"));
+});
+check("buildRecordProps: 旬なし (年月のみ) → 時期 select は付けない", () => {
+  const p = buildRecordProps({ 物件番号: "1", 入居可能年月: "2026年9月" }, "OK", "x");
+  assert.strictEqual(p["入居可能_年"].number, 2026);
+  assert.strictEqual(p["入居可能_月"].number, 9);
+  assert.ok(!("入居可能_時期" in p));
+});
+check("buildRecordProps: 即時 (年月・旬なし) → 年月時期すべて付けない", () => {
+  const p = buildRecordProps({ 物件番号: "1", 入居時期: "即時" }, "OK", "x");
+  assert.ok(!("入居可能_年" in p));
+  assert.ok(!("入居可能_月" in p));
+  assert.ok(!("入居可能_時期" in p));
+  assert.strictEqual(p["入居時期(原文)"].rich_text[0].text.content, "即時");
 });
 check("buildRecordProps: 賃料・面積を数値化", () => {
   const p = buildRecordProps(SAMPLE, "OK", "x");

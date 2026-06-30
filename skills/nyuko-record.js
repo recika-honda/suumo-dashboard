@@ -45,12 +45,21 @@ function toHalfWidthDigits(str) {
  */
 function parseMoveInTiming(raw) {
   if (!raw || typeof raw !== "string") return {};
-  const s = toHalfWidthDigits(raw);
+  // 全角数字を半角化し、空白を除去 ("令和 8年 9月" → "令和8年9月")
+  const s = toHalfWidthDigits(raw).replace(/\s+/g, "");
   const out = {};
-  const ym = s.match(/(\d{4})\s*年(?:\s*(\d{1,2})\s*月)?/);
-  if (ym) {
-    out.年 = parseInt(ym[1], 10);
-    if (ym[2]) out.月 = parseInt(ym[2], 10);
+  // 和暦 (令和/平成/昭和 N年 M月) を西暦に変換。REINS は和暦で返す。
+  const ERA_BASE = { 令和: 2018, 平成: 1988, 昭和: 1925 }; // 元年 = base + 1
+  const wareki = s.match(/(令和|平成|昭和)(\d{1,2})年(?:(\d{1,2})月)?/);
+  if (wareki) {
+    out.年 = ERA_BASE[wareki[1]] + parseInt(wareki[2], 10);
+    if (wareki[3]) out.月 = parseInt(wareki[3], 10);
+  } else {
+    const ym = s.match(/(\d{4})年(?:(\d{1,2})月)?/);
+    if (ym) {
+      out.年 = parseInt(ym[1], 10);
+      if (ym[2]) out.月 = parseInt(ym[2], 10);
+    }
   }
   const jun = s.match(/上旬|中旬|下旬/);
   if (jun && TIMING_OPTIONS.has(jun[0])) out.時期 = jun[0];

@@ -47,6 +47,20 @@ check("parseMoveInTiming: 全角数字も拾う", () => {
     年: 2026, 月: 7, 時期: "中旬",
   });
 });
+check("parseMoveInTiming: 和暦 令和 (空白入り) → 西暦変換", () => {
+  // REINS は "令和 8年 9月" 形式で返す → 2026年9月
+  assert.deepStrictEqual(parseMoveInTiming("令和 8年 9月"), { 年: 2026, 月: 9 });
+  assert.deepStrictEqual(parseMoveInTiming("令和8年7月"), { 年: 2026, 月: 7 });
+});
+check("parseMoveInTiming: 和暦 + 旬 (結合文字列)", () => {
+  assert.deepStrictEqual(parseMoveInTiming("令和 8年 9月 / 中旬 / 予定"), {
+    年: 2026, 月: 9, 時期: "中旬",
+  });
+});
+check("parseMoveInTiming: 平成/昭和 も変換", () => {
+  assert.deepStrictEqual(parseMoveInTiming("平成31年4月"), { 年: 2019, 月: 4 });
+  assert.deepStrictEqual(parseMoveInTiming("昭和60年"), { 年: 1985 });
+});
 check("parseMoveInTiming: 即時/相談 → 空", () => {
   assert.deepStrictEqual(parseMoveInTiming("即時"), {});
   assert.deepStrictEqual(parseMoveInTiming("相談"), {});

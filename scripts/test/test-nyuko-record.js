@@ -107,6 +107,14 @@ check("buildRecordProps: 抽出ステータスは select", () => {
   assert.strictEqual(buildRecordProps(SAMPLE, "OK", "x")["抽出ステータス"].select.name, "OK");
   assert.strictEqual(buildRecordProps({}, "REG_FAIL", "x")["抽出ステータス"].select.name, "REG_FAIL");
 });
+check("buildRecordProps: 掲載指示ステータス + 点数 を記録", () => {
+  const p = buildRecordProps(SAMPLE, "掲載指示", "126513", 38);
+  assert.strictEqual(p["抽出ステータス"].select.name, "掲載指示");
+  assert.strictEqual(p["点数"].number, 38);
+});
+check("buildRecordProps: 点数なし → 点数プロパティを付けない", () => {
+  assert.ok(!("点数" in buildRecordProps(SAMPLE, "掲載指示", "x")));
+});
 check("buildRecordProps: 現況は raw 値を select 化 (許可値外も保持)", () => {
   assert.strictEqual(buildRecordProps(SAMPLE, "OK", "x")["現況"].select.name, "空室");
   // 許可値セット外 (XPath 由来) でも取りこぼさず書き込む

@@ -95,7 +95,7 @@ function chunkRichText(str, size = 1900, maxChunks = 12) {
  * @param {string} status     "OK" | "REG_FAIL" | "NOT_FOUND"
  * @param {string} reinsId    物件番号 (title)
  */
-function buildRecordProps(reinsData, status, reinsId) {
+function buildRecordProps(reinsData, status, reinsId, score) {
   const data = reinsData || {};
   const props = {};
 
@@ -118,8 +118,11 @@ function buildRecordProps(reinsData, status, reinsId) {
     title: [{ text: { content: String(data.物件番号 || reinsId || "").trim() } }],
   };
 
-  // 抽出ステータス
-  setSelect("抽出ステータス", status, STATUS_OPTIONS);
+  // 抽出ステータス: 掲載指示 等の任意値も許容 (Notion が未知 option を自動作成)
+  setSelect("抽出ステータス", status);
+
+  // 点数 (名寄せ/掲載スコア。記録トリガーとなった 34 点以上の値)
+  setNum("点数", score);
 
   // 現況: XPath 由来の値は許可値セット外があり得るため制限せず raw を書く。
   // Notion は未知の select option を自動作成するので取りこぼさない。
@@ -177,14 +180,14 @@ function getClient() {
  * env 未設定 (NOTION_TOKEN / NOTION_NYUKO_RECORD_DB_ID) なら静かに no-op。
  * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string, pageId?: string, error?: string}>}
  */
-async function recordExtraction({ reinsId, reinsData, status }) {
+async function recordExtraction({ reinsId, reinsData, status, score }) {
   const dbId = process.env.NOTION_NYUKO_RECORD_DB_ID;
   if (!dbId) return { ok: false, skipped: true, reason: "NOTION_NYUKO_RECORD_DB_ID未設定" };
 
   const notion = getClient();
   if (!notion) return { ok: false, skipped: true, reason: "NOTION_TOKEN未設定" };
 
-  const properties = buildRecordProps(reinsData, status, reinsId);
+  const properties = buildRecordProps(reinsData, status, reinsId, score);
 
   let lastErr;
   const MAX_ATTEMPTS = 4;

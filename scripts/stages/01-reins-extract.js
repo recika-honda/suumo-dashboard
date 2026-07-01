@@ -18,27 +18,12 @@ const fs = require("fs");
 const path = require("path");
 const reins = require("../../skills/reins");
 const forrent = require("../../skills/forrent");
-const nyukoRecord = require("../../skills/nyuko-record");
 const { writeStageInput, writeStageOutput } = require("../lib/artifact");
 
 const STAGE = "01-reins-extract";
 
-/**
- * 抽出テキストを「入稿記録」Notion DB に追記する (監査ログ)。
- * 失敗・env 未設定でもパイプラインは絶対に止めない (catch + logStep のみ)。
- */
-async function recordToNotion({ reinsId, reinsData, status, logStep }) {
-  try {
-    const r = await nyukoRecord.recordExtraction({ reinsId, reinsData, status });
-    logStep("nyuko_record", { ok: r.ok, skipped: r.skipped, reason: r.reason });
-    if (!r.ok && !r.skipped) {
-      console.error(`  [入稿記録] Notion追記失敗: ${r.error}`);
-    }
-  } catch (err) {
-    logStep("nyuko_record", { ok: false, error: err.message });
-    console.error(`  [入稿記録] 例外: ${err.message}`);
-  }
-}
+// NOTE: 入稿記録 Notion DB への追記は Stage 06 (掲載指示成功=score≥34 時) に移設した。
+// Stage 01 は reins-data.json を書き出すのみ (Stage 06 がそれを読んで記録する)。
 
 /**
  * @param {object} opts
@@ -72,7 +57,6 @@ async function runReinsExtract({ reinsPage, reinsId, index, logStep, runDir }) {
   if (!found) {
     console.error("  -> 物件が見つかりませんでした");
     logStep("reins_search_not_found");
-    await recordToNotion({ reinsId, reinsData: {}, status: "NOT_FOUND", logStep });
     const out = { status: "NOT_FOUND" };
     writeStageOutput(runDir, STAGE, out);
     return out;
@@ -98,15 +82,6 @@ async function runReinsExtract({ reinsPage, reinsId, index, logStep, runDir }) {
   // 早期バリデーション: forrent.jp 必須項目欠落のショートサーキット。
   // ルール本体は skills/forrent.js#checkRequiredFromReinsData。
   const required = forrent.checkRequiredFromReinsData(reinsData);
-
-  // 入稿記録: 抽出したテキスト(現況・入居可能時期など)を Notion DB に追記。
-  // forrent 必須チェック後の OK/REG_FAIL を status として残す。
-  await recordToNotion({
-    reinsId,
-    reinsData,
-    status: required.ok ? "OK" : "REG_FAIL",
-    logStep,
-  });
 
   if (!required.ok) {
     console.error(`  -> ${required.missingField}未取得（forrent必須） → REG_FAIL早期確定`);

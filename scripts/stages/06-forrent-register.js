@@ -13,8 +13,11 @@
  * close する責務を負う。
  */
 
+const fs = require("fs");
+const path = require("path");
 const forrent = require("../../skills/forrent");
 const slack = require("../../skills/slack");
+const nyukoRecord = require("../../skills/nyuko-record");
 const {
   getEscalationConfig,
   formatSlackMessage,
@@ -23,6 +26,16 @@ const {
 const { writeStageInput, writeStageOutput } = require("../lib/artifact");
 
 const STAGE = "06-forrent-register";
+
+// Stage 01 が書き出した reins-data.json を読む (入稿記録の元データ)。
+function readReinsData(runDir) {
+  if (!runDir) return {};
+  try {
+    return JSON.parse(fs.readFileSync(path.join(runDir, "reins-data.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
 
 /**
  * @param {object} opts
@@ -102,6 +115,27 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep, rei
     } catch (e) {
       console.error(`  [slack] 掲載指示通知 例外: ${e.message}`);
       logStep("slack_notify_escalated", { ok: false, error: e.message });
+    }
+
+    // ── 入稿記録: 掲載指示 (score≥34) 物件の REINS 詳細を Notion に追記 — best-effort ──
+    // 記録トリガーはここ (Stage 01 の全件記録から移設)。env 未設定/失敗でも止めない。
+    try {
+      const reinsData = readReinsData(runDir);
+      const r = await nyukoRecord.recordExtraction({
+        reinsId,
+        reinsData,
+        status: "掲載指示",
+        score: regResult.score ?? null,
+      });
+      logStep("nyuko_record", { ok: r.ok, skipped: r.skipped, reason: r.reason });
+      if (r.ok) {
+        console.error(`  [入稿記録] Notion追記 (${regResult.score ?? "?"}pt)`);
+      } else if (!r.skipped) {
+        console.error(`  [入稿記録] Notion追記失敗: ${r.error}`);
+      }
+    } catch (e) {
+      logStep("nyuko_record", { ok: false, error: e.message });
+      console.error(`  [入稿記録] 例外: ${e.message}`);
     }
   }
 

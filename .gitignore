@@ -1,6 +1,8 @@
 node_modules/
 .next/
 .env.local
+.env.local.*
+*.bak
 *.log
 .DS_Store
 .cache/
@@ -14,3 +16,4 @@ scripts/legacy/measure-*-result.json
 # npm lockfile — this project uses bun (bun.lock is the source of truth).
 # npm install on a different machine creates spurious diffs.
 package-lock.json
+tools/realesrgan/

@@ -15,6 +15,9 @@ function getClient() {
 }
 
 async function notifyNyukoSuccess({ reinsId, propertyName, score, registrationType }) {
+  // 2026-06-15 kento 指示: Slack 通知は score>=34 の掲載指示 (notifyEscalationSuccess) のみ。
+  // 入稿完了 (掲載保留含む) 通知は SLACK_NOTIFY_SUCCESS=0 で無効化。
+  if (process.env.SLACK_NOTIFY_SUCCESS === "0") return { ok: false, skipped: true };
   const channel = process.env.SLACK_DM_CHANNEL_ID;
   const client = getClient();
   if (!client || !channel) {
@@ -49,6 +52,8 @@ async function notifyNyukoSuccess({ reinsId, propertyName, score, registrationTy
 }
 
 async function notifyError({ reinsId, propertyName, error }) {
+  // 2026-06-15 kento 指示: 入稿失敗の Slack 通知は無効 (SLACK_NOTIFY_ERROR=0)。
+  if (process.env.SLACK_NOTIFY_ERROR === "0") return { ok: false, skipped: true };
   const channel = process.env.SLACK_DM_CHANNEL_ID;
   const client = getClient();
   if (!client || !channel) return { ok: false, skipped: true };

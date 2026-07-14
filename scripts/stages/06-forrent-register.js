@@ -142,7 +142,10 @@ async function runForrentRegister({ forrentPage, mainFrame, runDir, logStep, rei
   // ── capacity fallback (escalation 試行後の保留 fallback) 成功時の Slack 通知 ──
   // escalated:false / capacityExceeded:true で SUCCESS となるケース。既存 escalation
   // success 通知 (escalated:true) とは排他、同時発火しない。
-  if (regResult.saved && regResult.capacityExceeded) {
+  // 2026-07-14 kento 指示: 掲載枠フル時は通知しない (.env.local で SLACK_NOTIFY_CAPACITY_FALLBACK=0)。
+  if (regResult.saved && regResult.capacityExceeded && process.env.SLACK_NOTIFY_CAPACITY_FALLBACK === "0") {
+    logStep("slack_notify_capacity_fallback", { ok: false, skipped: true });
+  } else if (regResult.saved && regResult.capacityExceeded) {
     try {
       const cfg = getEscalationConfig();
       const kishaCode = reinsId ? `fng${reinsId}` : "";

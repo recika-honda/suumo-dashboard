@@ -40,6 +40,19 @@ const DB_ID = process.env.NOTION_DATABASE_ID;
 const POLL_INTERVAL_MS = (parseInt(process.env.POLL_INTERVAL_SEC, 10) || 60) * 1000;
 const SKIP_HOURS_CHECK = process.env.SKIP_HOURS_CHECK === "1";
 
+// ── 撤退ペアリング hook (入稿一件・撤下一件、2026-07-17) ──
+// バッチ起動の直前に ADs-Withdraw を 1 回実行し、占枠水位線協調器に枠を先に
+// 空けさせる (広告待ち は占枠に数えられているので、この時点で超過分が撤退される)。
+// 対账制なのでバッチが失敗して 広告待ち が残っても次サイクルで重複撤退はしない。
+// 失敗/タイムアウトしても入稿は止めない (枠が無ければ forrent 側で草稿になるだけ)。
+// 撤退側の実際の挙動は ADs-Withdraw の .env.local (QUEUE_MODE_ENABLED 等) が決める。
+const PAIR_WITHDRAW_ENABLED = process.env.PAIR_WITHDRAW_ENABLED === "1";
+const PAIR_WITHDRAW_SCRIPT =
+  process.env.PAIR_WITHDRAW_SCRIPT ||
+  "/Users/recika/Fango/ADs-Withdraw/scripts/withdraw.js";
+const PAIR_WITHDRAW_TIMEOUT_MS =
+  (parseInt(process.env.PAIR_WITHDRAW_TIMEOUT_MIN, 10) || 15) * 60 * 1000;
+
 const LOGS_DIR = path.join(__dirname, "..", "logs");
 
 let running = false;
@@ -77,6 +90,34 @@ async function countPending() {
     cursor = next.has_more ? next.next_cursor : undefined;
   }
   return total;
+}
+
+// ADs-Withdraw を 1 回実行して完了を待つ。env は渡さない (NOTION_TOKEN 等が
+// 本プロジェクトの値で dotenv を上書きしてしまうため) — withdraw.js は自分の
+// .env.local から全設定を読む。exit code に関わらず resolve (入稿を止めない)。
+function runPairWithdraw() {
+  return new Promise((resolve) => {
+    console.error(`[${now()}] [pair] 撤退ペアリング実行: ${PAIR_WITHDRAW_SCRIPT}`);
+    const child = spawn(process.execPath, [PAIR_WITHDRAW_SCRIPT], {
+      cwd: path.dirname(path.dirname(PAIR_WITHDRAW_SCRIPT)),
+      stdio: ["ignore", "inherit", "inherit"],
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    });
+    const timer = setTimeout(() => {
+      console.error(`[${now()}] [pair] timeout ${PAIR_WITHDRAW_TIMEOUT_MS / 60000}min → kill`);
+      child.kill("SIGTERM");
+    }, PAIR_WITHDRAW_TIMEOUT_MS);
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      console.error(`[${now()}] [pair] 撤退ペアリング完了 exit=${code}`);
+      resolve(code);
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      console.error(`[${now()}] [pair] spawn 失敗: ${e.message} → 入稿は続行`);
+      resolve(null);
+    });
+  });
 }
 
 function runBatch() {
@@ -276,6 +317,9 @@ async function tick() {
   console.error(`\n[${now()}] pending=${pending} → バッチ起動`);
   running = true;
   try {
+    if (PAIR_WITHDRAW_ENABLED) {
+      await runPairWithdraw(); // 入稿前に枠を空ける (失敗しても続行)
+    }
     const { code, report } = await runBatch();
     const summary = report
       ? `processed=${report.processed} succeeded=${report.succeeded} failed=${report.failed}`

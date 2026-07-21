@@ -40,6 +40,21 @@ const DB_ID = process.env.NOTION_DATABASE_ID;
 const POLL_INTERVAL_MS = (parseInt(process.env.POLL_INTERVAL_SEC, 10) || 60) * 1000;
 const SKIP_HOURS_CHECK = process.env.SKIP_HOURS_CHECK === "1";
 
+// ── 会社フィルタ (2026-07-21、多会社化) ──
+// おすすめ DB は funts / Summit Society 共用のため、NYUKO_COMPANY_NAME を設定した機体は
+// 自社 (担当会社 = この値) の 広告待ち だけを拾う。未設定なら従来どおり全件 (単社互換)。
+// 担当会社 が空の行はどの機体も拾わない → 広告待ち に残留して人目で気づける
+// (誤アカウント入稿より安全)。水位線協調器 (WITHDRAW_COMPANY_NAME) と同じ値を設定すること。
+const COMPANY_NAME = (process.env.NYUKO_COMPANY_NAME || "").trim();
+const PENDING_FILTER = COMPANY_NAME
+  ? {
+      and: [
+        { property: "Status", status: { equals: "広告待ち" } },
+        { property: "担当会社", select: { equals: COMPANY_NAME } },
+      ],
+    }
+  : { property: "Status", status: { equals: "広告待ち" } };
+
 // ── 撤退ペアリング hook (入稿一件・撤下一件、2026-07-17) ──
 // バッチ起動の直前に ADs-Withdraw を 1 回実行し、占枠水位線協調器に枠を先に
 // 空けさせる (広告待ち は占枠に数えられているので、この時点で超過分が撤退される)。
@@ -72,7 +87,7 @@ function isWithinWorkHours() {
 async function countPending() {
   const db = await notion.databases.query({
     database_id: DB_ID,
-    filter: { property: "Status", status: { equals: "広告待ち" } },
+    filter: PENDING_FILTER,
     page_size: 1,
   });
   // has_more を使うが、最小限の件数取得のため再クエリで数える
@@ -82,7 +97,7 @@ async function countPending() {
   while (cursor) {
     const next = await notion.databases.query({
       database_id: DB_ID,
-      filter: { property: "Status", status: { equals: "広告待ち" } },
+      filter: PENDING_FILTER,
       page_size: 100,
       start_cursor: cursor,
     });

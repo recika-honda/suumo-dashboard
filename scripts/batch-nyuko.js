@@ -42,6 +42,18 @@ const { runForrentRegister } = require("./stages/06-forrent-register");
 const notion = new NotionClient({ auth: process.env.NOTION_TOKEN });
 const DB_ID = process.env.NOTION_DATABASE_ID;
 
+// ── 会社フィルタ (2026-07-21、多会社化) ── watch-nyuko.js と同じ規約。
+// NYUKO_COMPANY_NAME 設定時は 担当会社 = この値 の 広告待ち のみ入稿対象。
+const COMPANY_NAME = (process.env.NYUKO_COMPANY_NAME || "").trim();
+const PENDING_FILTER = COMPANY_NAME
+  ? {
+      and: [
+        { property: "Status", status: { equals: "広告待ち" } },
+        { property: "担当会社", select: { equals: COMPANY_NAME } },
+      ],
+    }
+  : { property: "Status", status: { equals: "広告待ち" } };
+
 const MAX_LOGIN_RETRIES = 3;
 const PROPERTY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes per property
 const dryRun = process.argv.includes("--dry-run");
@@ -125,10 +137,7 @@ async function fetchPendingProperties() {
   do {
     const db = await notion.databases.query({
       database_id: DB_ID,
-      filter: {
-        property: "Status",
-        status: { equals: "広告待ち" },
-      },
+      filter: PENDING_FILTER,
       page_size: 100,
       ...(cursor && { start_cursor: cursor }),
     });
